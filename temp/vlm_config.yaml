@@ -1,0 +1,22 @@
+pipeline:
+  up_axis: "Z"
+  meters_per_unit: 1.0
+  output_format: "usda"
+
+geometry:
+  tessellation_tolerance: 0.001
+  generate_lods: true
+  lod_levels: [1.0, 0.5, 0.25]
+
+materials:
+  target_format: "mdl"
+  fallback_mdl: "OmniPBR.mdl"
+  enable_vlm: true
+  vlm_model: "claude-haiku-4-5"
+  vlm_max_calls: 200
+
+validation:
+  enabled: true
+  strict: false
+  material_tolerance: 0.05
+  enable_confidence_gate: false

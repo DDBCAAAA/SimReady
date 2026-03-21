@@ -229,8 +229,8 @@ def create_stage(
                 lod_verts, lod_faces, body.normals,
             )
 
-        # Semantic label — needed before collision to decide decomposition strategy
-        sem_label = classify(body.name)
+        # Semantic label — VLM result takes priority over keyword classifier
+        sem_label = body.metadata.get("semantic_label") or classify(body.name)
 
         # --- Collision meshes ---
         # Complex concave parts (gears, cams) get full CoACD decomposition so that

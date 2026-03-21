@@ -22,7 +22,8 @@ materials:
   fallback_mdl: "OmniPBR.mdl"
   # VLM-based material classification (requires ANTHROPIC_API_KEY)
   enable_vlm: false
-  vlm_model: "claude-opus-4-6"
+  vlm_model: "claude-haiku-4-5"
+  vlm_max_calls: 200
 
 validation:
   # Enable SimReady compliance checks

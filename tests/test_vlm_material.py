@@ -1,4 +1,4 @@
-"""Tests for VLM-based material classification.
+"""Tests for VLM-based material classification and semantic labeling.
 
 All Anthropic API calls are mocked — no network required.
 The `anthropic` package is not installed in this env; we inject a fake module.
@@ -16,6 +16,7 @@ import pytest
 
 from simready.acquisition.vlm_material import (
     _VALID_CLASSES,
+    _VALID_SEMANTIC_LABELS,
     classify_material_vlm,
     clear_vlm_cache,
 )
@@ -26,11 +27,19 @@ from simready.materials.material_map import CAEMaterial, map_cae_to_mdl
 # Helper: build a fake anthropic module that looks like the real one
 # ---------------------------------------------------------------------------
 
-def _make_anthropic_module(material_class: str, confidence: float):
+def _make_anthropic_module(
+    material_class: str,
+    confidence: float,
+    semantic_label: str = "fastener:nut",
+):
     """Return (fake_module, client_instance) for injection into sys.modules."""
     text_block = SimpleNamespace(
         type="text",
-        text=json.dumps({"material_class": material_class, "confidence": confidence}),
+        text=json.dumps({
+            "material_class": material_class,
+            "confidence": confidence,
+            "semantic_label": semantic_label,
+        }),
     )
     response = SimpleNamespace(content=[text_block])
     client_instance = MagicMock()
@@ -60,17 +69,18 @@ class TestClassifyMaterialVlm:
         # Remove any cached 'anthropic' from sys.modules between tests
         sys.modules.pop("anthropic", None)
 
-    def test_returns_class_and_confidence(self, monkeypatch):
+    def test_returns_class_confidence_and_semantic_label(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-        fake_mod, _ = _make_anthropic_module("steel", 0.92)
+        fake_mod, _ = _make_anthropic_module("steel", 0.92, "fastener:nut")
         with patch.dict(sys.modules, {"anthropic": fake_mod}):
             result = classify_material_vlm(
                 "ISO10642_Hex_Socket_M3x10", bbox_m=(0.003, 0.003, 0.01)
             )
         assert result is not None
-        mat_class, confidence = result
+        mat_class, confidence, sem_label = result
         assert mat_class == "steel"
         assert confidence == pytest.approx(0.92)
+        assert sem_label == "fastener:nut"
 
     def test_missing_api_key_returns_none(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -116,8 +126,19 @@ class TestClassifyMaterialVlm:
         with patch.dict(sys.modules, {"anthropic": fake_mod}):
             result = classify_material_vlm("aluminum_plate")
         assert result is not None
-        _, confidence = result
+        _, confidence, _ = result
         assert 0.0 <= confidence <= 1.0
+
+    def test_unknown_semantic_label_returns_none_for_label(self, monkeypatch):
+        """Invalid semantic label is discarded; material result still returned."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_mod, _ = _make_anthropic_module("steel", 0.88, "robot:part")
+        with patch.dict(sys.modules, {"anthropic": fake_mod}):
+            result = classify_material_vlm("some_part")
+        assert result is not None
+        mat_class, confidence, sem_label = result
+        assert mat_class == "steel"
+        assert sem_label is None  # invalid label discarded
 
     def test_cache_deduplication(self, monkeypatch):
         """API is called only once for identical inputs across two calls."""
@@ -134,6 +155,12 @@ class TestClassifyMaterialVlm:
         assert len(_VALID_CLASSES) > 0
         for cls in _VALID_CLASSES:
             assert isinstance(cls, str) and cls
+
+    def test_all_valid_semantic_labels_non_empty(self):
+        """Sanity check: _VALID_SEMANTIC_LABELS is non-empty and all strings."""
+        assert len(_VALID_SEMANTIC_LABELS) > 0
+        for label in _VALID_SEMANTIC_LABELS:
+            assert isinstance(label, str) and ":" in label
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +196,7 @@ class TestMapCaeToMdlVlm:
     def test_vlm_overrides_mat_class_when_regex_fails(self, monkeypatch):
         """VLM provides class+confidence when regex returns None."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-        fake_mod, _ = _make_anthropic_module("steel", 0.91)
+        fake_mod, _ = _make_anthropic_module("steel", 0.91, "fastener:nut")
         with patch.dict(sys.modules, {"anthropic": fake_mod}):
             result = map_cae_to_mdl(
                 CAEMaterial(name="body_0"),
@@ -177,6 +204,22 @@ class TestMapCaeToMdlVlm:
             )
         assert result.confidence == pytest.approx(0.91)
         assert result.density == pytest.approx(7850.0)
+
+    def test_vlm_semantic_label_stored_on_material(self, monkeypatch):
+        """VLM-returned semantic label is stored on the MDLMaterial."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_mod, _ = _make_anthropic_module("steel", 0.91, "fastener:bolt")
+        with patch.dict(sys.modules, {"anthropic": fake_mod}):
+            result = map_cae_to_mdl(
+                CAEMaterial(name="body_0"),
+                enable_vlm=True,
+            )
+        assert result.vlm_semantic_label == "fastener:bolt"
+
+    def test_vlm_semantic_label_none_when_vlm_disabled(self, monkeypatch):
+        """vlm_semantic_label is None when VLM is not used."""
+        result = map_cae_to_mdl(CAEMaterial(name="body_0"))
+        assert result.vlm_semantic_label is None
 
     def test_vlm_overrides_confidence_when_regex_succeeds(self, monkeypatch):
         """VLM provides higher confidence even when regex already found a class."""
@@ -219,7 +262,7 @@ class TestMapCaeToMdlVlm:
     def test_vlm_bbox_and_semantic_label_passed_through(self, monkeypatch):
         """Verify semantic_label and bbox_m are forwarded in the VLM prompt."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-        fake_mod, client_instance = _make_anthropic_module("titanium", 0.85)
+        fake_mod, client_instance = _make_anthropic_module("titanium", 0.85, "structural:bracket")
         with patch.dict(sys.modules, {"anthropic": fake_mod}):
             result = map_cae_to_mdl(
                 CAEMaterial(name="bracket_part"),
@@ -232,3 +275,4 @@ class TestMapCaeToMdlVlm:
         assert "bracket" in user_msg
         assert "50.0" in user_msg  # 0.05 m → 50.0 mm
         assert result.confidence == pytest.approx(0.85)
+        assert result.vlm_semantic_label == "structural:bracket"

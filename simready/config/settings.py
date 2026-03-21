@@ -23,7 +23,8 @@ class MaterialSettings:
     target_format: str = "mdl"
     fallback_mdl: str = "OmniPBR.mdl"
     enable_vlm: bool = False
-    vlm_model: str = "claude-opus-4-6"
+    vlm_model: str = "claude-haiku-4-5"
+    vlm_max_calls: int = 200
 
 
 @dataclass

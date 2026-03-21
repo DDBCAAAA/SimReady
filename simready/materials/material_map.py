@@ -45,6 +45,7 @@ class MDLMaterial:
     # Track provenance
     source_material: str | None = None
     confidence: float = 1.0  # 0.0–1.0, how much of this came from real CAE data
+    vlm_semantic_label: str | None = None  # VLM-improved semantic label, if available
 
 
 # Known material class → approximate PBR defaults.
@@ -225,9 +226,10 @@ def map_cae_to_mdl(
     fallback_mdl: str = "OmniPBR.mdl",
     forced_class: str | None = None,
     enable_vlm: bool = False,
-    vlm_model: str = "claude-opus-4-6",
+    vlm_model: str = "claude-haiku-4-5",
     semantic_label: str | None = None,
     bbox_m: tuple[float, float, float] | None = None,
+    vlm_max_calls: int = 500,
 ) -> MDLMaterial:
     """Map CAE material properties to MDL parameters.
 
@@ -275,9 +277,10 @@ def map_cae_to_mdl(
             bbox_m=bbox_m,
             model=vlm_model,
             hint_class=mat_class,
+            max_calls=vlm_max_calls,
         )
         if vlm_result is not None:
-            mat_class, _vlm_confidence_override = vlm_result
+            mat_class, _vlm_confidence_override, mdl.vlm_semantic_label = vlm_result
 
     if mat_class:
         defaults = _MATERIAL_CLASS_DEFAULTS[mat_class]

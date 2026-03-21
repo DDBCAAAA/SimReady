@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import numpy as np
@@ -82,8 +83,12 @@ def run(
         key = body.material_name or body.name
         if key in mdl_materials:
             continue  # shared material already mapped
+        # Use filename stem when body name is generic (e.g. FreeCAD's "body_0")
+        # so the VLM gets a meaningful part name rather than a placeholder.
+        _is_generic = bool(re.fullmatch(r"body_?\d+|solid_?\d+|shape_?\d+", key, re.IGNORECASE))
+        vlm_part_name = input_path.stem if _is_generic else key
         cae_mat = CAEMaterial(
-            name=key,
+            name=vlm_part_name,
             **body.metadata.get("material_properties", {}),
         )
         # Resolve material override: body-specific key first, then wildcard "*"
@@ -97,7 +102,7 @@ def run(
         if settings.materials.enable_vlm:
             try:
                 from simready.semantics.classifier import classify as _classify_semantic  # noqa: PLC0415
-                _sem = _classify_semantic(key)
+                _sem = _classify_semantic(vlm_part_name)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Semantic classifier unavailable for '%s': %s", key, exc)
             if body.vertices is not None and len(body.vertices) > 0:
@@ -112,8 +117,14 @@ def run(
             vlm_model=settings.materials.vlm_model,
             semantic_label=_sem,
             bbox_m=_bbox,
+            vlm_max_calls=settings.materials.vlm_max_calls,
         )
         mdl_materials[key] = mdl_mat
+        # Propagate VLM-improved semantic label to all bodies sharing this material key
+        if mdl_mat.vlm_semantic_label:
+            for b in assembly.bodies:
+                if (b.material_name or b.name) == key:
+                    b.metadata["semantic_label"] = mdl_mat.vlm_semantic_label
 
     # --- 3b. Quality gate: material confidence ---
     # Use the minimum confidence across all materials in the assembly — the
