@@ -1,0 +1,38 @@
+# SimReady pipeline configuration
+
+pipeline:
+  # Up-axis for output USD: "Y" or "Z"
+  up_axis: "Z"
+  # Vertices are scaled to meters in geometry preprocessing; this must stay 1.0.
+  meters_per_unit: 1.0
+  # Output format: "usda" (ASCII, debug), "usdc" (binary, production)
+  output_format: "usdc"
+
+geometry:
+  # Tessellation chord tolerance for BRep → mesh (meters)
+  tessellation_tolerance: 0.001
+  # Generate LODs
+  generate_lods: true
+  lod_levels: [1.0, 0.5, 0.25]
+
+materials:
+  # Target material format: "mdl" for Omniverse, "preview" for UsdPreviewSurface
+  target_format: "mdl"
+  # Default MDL material to use when CAE properties are incomplete
+  fallback_mdl: "OmniPBR.mdl"
+  # VLM-based material classification (requires ANTHROPIC_API_KEY)
+  enable_vlm: false
+  vlm_model: "claude-opus-4-6"
+
+validation:
+  # Enable SimReady compliance checks
+  enabled: true
+  # Fail pipeline on validation errors (vs. warnings).
+  # Set true only when processing CAE files with known material data.
+  # For open-source STEP files without optical/material properties, use false.
+  strict: false
+  # Material fidelity tolerance (max allowed deviation from source properties)
+  material_tolerance: 0.05
+  # Confidence quality gate: block USD generation for assets below 0.8 confidence.
+  # Set false to disable (useful for single-asset dev/test conversions).
+  enable_confidence_gate: true

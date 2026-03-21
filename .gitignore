@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+.env
+*.env.*
+.env.local
+
+# IDEs / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Claude Code local settings (project-specific, not for sharing)
+.claude/settings.local.json
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Logs
+*.log
+
+# --- Data directory ---
+# Ignore heavy content; track folder skeleton via .gitkeep
+data/**/*.step
+data/**/*.stp
+data/**/*.stl
+data/**/*.obj
+data/**/*.7z
+data/**/*.json
+data/**/*.db
+
+# --- Output directory ---
+# Ignore generated assets; track folder skeleton via .gitkeep
+output/quarantine/
+output/**/*.usd
+output/**/*.usda
+output/**/*.usdc
+output/**/*.urdf
+output/**/*.xml
+output/**/*.ply
+output/**/*.png
+output/**/*.exr
+output/**/metadata.json
+
+# Allow .gitkeep to track directory structure
+!**/.gitkeep
