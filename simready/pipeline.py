@@ -68,6 +68,12 @@ def run(
         body.faces = mesh.faces
         body.normals = compute_normals(mesh)
 
+        # Cache geometry properties that downstream stages (VLM, mass-props) need.
+        # The mesh object is already available here — no second trimesh build required.
+        body.metadata["computed_is_watertight"] = mesh.is_watertight
+        if mesh.is_watertight:
+            body.metadata["computed_volume_m3"] = float(mesh.volume)
+
         # Generate LOD levels if enabled
         if settings.geometry.generate_lods:
             body.lod_meshes = []
@@ -96,9 +102,10 @@ def run(
         if material_overrides:
             forced = material_overrides.get(key) or material_overrides.get("*")
 
-        # Compute semantic label and bbox for VLM context (only when VLM enabled)
+        # Compute semantic label, bbox, and volume for VLM context (only when VLM enabled)
         _sem: str | None = None
         _bbox: tuple[float, float, float] | None = None
+        _volume_m3: float | None = None
         if settings.materials.enable_vlm:
             try:
                 from simready.semantics.classifier import classify as _classify_semantic  # noqa: PLC0415
@@ -108,6 +115,8 @@ def run(
             if body.vertices is not None and len(body.vertices) > 0:
                 extents = body.vertices.max(axis=0) - body.vertices.min(axis=0)
                 _bbox = (float(extents[0]), float(extents[1]), float(extents[2]))
+                # Volume already computed and cached in the geometry phase — no second trimesh build.
+                _volume_m3 = body.metadata.get("computed_volume_m3")
 
         mdl_mat = map_cae_to_mdl(
             cae_mat,
@@ -117,6 +126,7 @@ def run(
             vlm_model=settings.materials.vlm_model,
             semantic_label=_sem,
             bbox_m=_bbox,
+            volume_m3=_volume_m3,
             vlm_max_calls=settings.materials.vlm_max_calls,
         )
         mdl_materials[key] = mdl_mat

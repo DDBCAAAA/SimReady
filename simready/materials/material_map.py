@@ -46,6 +46,8 @@ class MDLMaterial:
     source_material: str | None = None
     confidence: float = 1.0  # 0.0–1.0, how much of this came from real CAE data
     vlm_semantic_label: str | None = None  # VLM-improved semantic label, if available
+    vlm_reasoning_step: str | None = None  # VLM chain-of-thought saved for data provenance
+    vlm_primary_material: str | None = None  # VLM-inferred material class (e.g. "steel")
 
 
 # Known material class → approximate PBR defaults.
@@ -229,6 +231,7 @@ def map_cae_to_mdl(
     vlm_model: str = "claude-haiku-4-5",
     semantic_label: str | None = None,
     bbox_m: tuple[float, float, float] | None = None,
+    volume_m3: float | None = None,
     vlm_max_calls: int = 500,
 ) -> MDLMaterial:
     """Map CAE material properties to MDL parameters.
@@ -275,12 +278,14 @@ def map_cae_to_mdl(
             part_name=cae_mat.name,
             semantic_label=semantic_label,
             bbox_m=bbox_m,
+            volume_m3=volume_m3,
             model=vlm_model,
             hint_class=mat_class,
             max_calls=vlm_max_calls,
         )
         if vlm_result is not None:
-            mat_class, _vlm_confidence_override, mdl.vlm_semantic_label = vlm_result
+            mat_class, _vlm_confidence_override, mdl.vlm_semantic_label, mdl.vlm_reasoning_step = vlm_result
+            mdl.vlm_primary_material = mat_class
 
     if mat_class:
         defaults = _MATERIAL_CLASS_DEFAULTS[mat_class]

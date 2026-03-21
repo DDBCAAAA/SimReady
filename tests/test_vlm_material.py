@@ -31,11 +31,13 @@ def _make_anthropic_module(
     material_class: str,
     confidence: float,
     semantic_label: str = "fastener:nut",
+    reasoning_step: str = "Standard industrial metal inferred from part name and dimensions.",
 ):
     """Return (fake_module, client_instance) for injection into sys.modules."""
     text_block = SimpleNamespace(
         type="text",
         text=json.dumps({
+            "reasoning_step": reasoning_step,
             "material_class": material_class,
             "confidence": confidence,
             "semantic_label": semantic_label,
@@ -77,7 +79,7 @@ class TestClassifyMaterialVlm:
                 "ISO10642_Hex_Socket_M3x10", bbox_m=(0.003, 0.003, 0.01)
             )
         assert result is not None
-        mat_class, confidence, sem_label = result
+        mat_class, confidence, sem_label, reasoning = result
         assert mat_class == "steel"
         assert confidence == pytest.approx(0.92)
         assert sem_label == "fastener:nut"
@@ -126,7 +128,7 @@ class TestClassifyMaterialVlm:
         with patch.dict(sys.modules, {"anthropic": fake_mod}):
             result = classify_material_vlm("aluminum_plate")
         assert result is not None
-        _, confidence, _ = result
+        _, confidence, _, _ = result
         assert 0.0 <= confidence <= 1.0
 
     def test_unknown_semantic_label_returns_none_for_label(self, monkeypatch):
@@ -136,7 +138,7 @@ class TestClassifyMaterialVlm:
         with patch.dict(sys.modules, {"anthropic": fake_mod}):
             result = classify_material_vlm("some_part")
         assert result is not None
-        mat_class, confidence, sem_label = result
+        mat_class, confidence, sem_label, _ = result
         assert mat_class == "steel"
         assert sem_label is None  # invalid label discarded
 
@@ -276,3 +278,47 @@ class TestMapCaeToMdlVlm:
         assert "50.0" in user_msg  # 0.05 m → 50.0 mm
         assert result.confidence == pytest.approx(0.85)
         assert result.vlm_semantic_label == "structural:bracket"
+
+    def test_vlm_volume_passed_through(self, monkeypatch):
+        """Volume (m³) is injected into the VLM user prompt when provided."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_mod, client_instance = _make_anthropic_module("steel", 0.91, "structural:flange")
+        with patch.dict(sys.modules, {"anthropic": fake_mod}):
+            classify_material_vlm(
+                "DN15_Stamped_Flange",
+                semantic_label="structural:flange",
+                bbox_m=(0.04, 0.04, 0.01),
+                volume_m3=2.856e-05,
+            )
+        call_kwargs = client_instance.messages.create.call_args
+        user_msg = call_kwargs.kwargs["messages"][0]["content"]
+        # bbox in mm
+        assert "40.0" in user_msg  # 0.04 m → 40.0 mm
+        # volume in scientific notation
+        assert "2.856e-05" in user_msg
+
+    def test_vlm_volume_unknown_when_not_provided(self, monkeypatch):
+        """When volume_m3 is None the prompt contains 'unknown' for volume."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_mod, client_instance = _make_anthropic_module("steel", 0.88)
+        with patch.dict(sys.modules, {"anthropic": fake_mod}):
+            classify_material_vlm("generic_part", bbox_m=(0.01, 0.01, 0.01))
+        call_kwargs = client_instance.messages.create.call_args
+        user_msg = call_kwargs.kwargs["messages"][0]["content"]
+        assert "unknown" in user_msg  # volume field shows "unknown"
+
+    def test_vlm_reasoning_step_in_response_schema(self, monkeypatch):
+        """reasoning_step is accepted and processed without error."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        fake_mod, _ = _make_anthropic_module(
+            "steel", 0.93, "fastener:bolt",
+            reasoning_step="M6 bolt name and 6mm diameter confirm standard carbon steel.",
+        )
+        with patch.dict(sys.modules, {"anthropic": fake_mod}):
+            result = classify_material_vlm(
+                "ISO4017_Hex_Bolt_M6", bbox_m=(0.006, 0.006, 0.02), volume_m3=3.5e-7
+            )
+        assert result is not None
+        mat_class, confidence, sem_label, _ = result
+        assert mat_class == "steel"
+        assert confidence == pytest.approx(0.93)

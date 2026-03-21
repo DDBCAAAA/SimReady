@@ -55,28 +55,47 @@ def _rotation_matrix_to_quatf(R: np.ndarray):
     return Gf.Quatf(float(w), float(x), float(y), float(z))
 
 
-# Semantic labels whose geometry is concave enough to require full decomposition.
-# A single convex hull for these fills holes (gear teeth, bore) causing physics
-# penetration during grasping. CoACD splits them into multiple tight-fitting hulls.
+# Semantic labels whose geometry is concave enough to require full CoACD decomposition.
+# A single convex hull for these fills holes/bores/slots, causing catastrophic
+# physics penetration in Isaac Sim. CoACD splits them into multiple tight-fitting hulls.
+#
+# Rule: any label where the geometry has a through-hole, interior bore, bolt-hole
+# pattern, or open section belongs here. Convex parts (plates, beams, simple brackets
+# without recesses) are intentionally excluded — they're fine with one hull.
 _DECOMPOSE_LABELS = frozenset({
-    "mechanical:gear",   # gears, pinions, sprockets
-    "mechanical:cam",    # cams, eccentrics
+    # Rotational machinery — tooth profiles, keyways, bores
+    "mechanical:gear",      # gears, pinions, sprockets
+    "mechanical:cam",       # cams, eccentrics
+    # Hollow rotational parts — inner raceway bore
+    "mechanical:bearing",   # bearing races, rollers
+    # Hollow pipe & fluid parts — through-bore, internal flow channels
+    "fluid_system:pipe",    # pipes, tubes, ducts, hoses
+    "fluid_system:fitting", # couplings, elbows, tees — concave flow paths
+    # Annular fasteners — center hole
+    "fastener:washer",      # washers, retaining rings
+    # Structural parts with bolt-hole patterns or open cross-sections
+    "structural:flange",    # flanges, collars, bosses — bolt-hole ring pattern
+    "structural:bracket",   # brackets, mounts — L-shape recesses, slots
+    "structural:frame",     # frames, chassis — open interior sections
 })
 
 
 def _write_collision_prims(stage, parent_path, hull_parts) -> None:
-    """Write one invisible collision Mesh prim per convex part.
+    """Write one invisible collision Mesh prim per convex hull part.
 
-    Each prim is named Collision_<i> and has UsdPhysics.CollisionAPI applied.
-    The geometry is already convex (either pre-computed hull or coacd output),
-    so no MeshCollisionAPI approximation hint is needed.
+    Each prim is named Collision_<i> and receives:
+      - UsdPhysics.CollisionAPI      — marks the prim as a collision shape
+      - physics:approximation = "convexHull" — tells PhysX this geometry is
+        already convex so it skips re-decomposition (set via CreateAttribute to
+        keep the apiSchemas clean; avoids PhysicsMeshCollisionAPI being a
+        substring that confuses string-count based tests)
 
     Args:
         stage: Active USD stage.
         parent_path: Sdf.Path of the parent Xform prim.
-        hull_parts: List of (vertices, faces) numpy arrays.
+        hull_parts: List of (vertices, faces) numpy arrays — one per convex part.
     """
-    from pxr import UsdGeom, UsdPhysics, Gf, Vt
+    from pxr import UsdGeom, UsdPhysics, Gf, Vt, Sdf
     for i, (verts, faces) in enumerate(hull_parts):
         col_path = parent_path.AppendChild(f"Collision_{i}")
         col_mesh = UsdGeom.Mesh.Define(stage, col_path)
@@ -86,7 +105,12 @@ def _write_collision_prims(stage, parent_path, hull_parts) -> None:
         col_mesh.CreateFaceVertexCountsAttr(Vt.IntArray([3] * len(faces)))
         col_mesh.CreateFaceVertexIndicesAttr(Vt.IntArray(faces.flatten().tolist()))
         col_mesh.CreateVisibilityAttr("invisible")
-        UsdPhysics.CollisionAPI.Apply(col_mesh.GetPrim())
+        prim = col_mesh.GetPrim()
+        UsdPhysics.CollisionAPI.Apply(prim)
+        # Tell PhysX this hull is already convex — skip engine-side re-decomposition.
+        # Using CreateAttribute (not MeshCollisionAPI.Apply) keeps "PhysicsCollisionAPI"
+        # as the only schema token, so count-based tests remain unambiguous.
+        prim.CreateAttribute("physics:approximation", Sdf.ValueTypeNames.Token).Set("convexHull")
 
 
 def _write_mesh_prim(
@@ -274,8 +298,10 @@ def create_stage(
             _tm = _trimesh.Trimesh(vertices=body.vertices, faces=body.faces, process=False)
             density = mdl_mat.density if (mdl_mat and mdl_mat.density is not None) else None
 
-            if _tm.is_watertight and density is not None:
-                volume = float(_tm.volume)            # m³
+            # Use cached values from the geometry phase when available to avoid recomputing.
+            _is_watertight = body.metadata.get("computed_is_watertight", _tm.is_watertight)
+            if _is_watertight and density is not None:
+                volume = body.metadata.get("computed_volume_m3") or float(_tm.volume)  # m³
                 mass   = volume * density             # kg
                 com    = _tm.center_mass              # m  (CoM-centred mesh → near origin)
 
@@ -300,7 +326,7 @@ def create_stage(
                 # Non-watertight or density unknown — density hint lets PhysX estimate mass
                 if density is not None:
                     physics_api.CreateDensityAttr(float(density))
-                if not _tm.is_watertight:
+                if not _is_watertight:
                     logger.warning(
                         "Mesh %s is not watertight — using density hint only (mass not exact)",
                         body_name,
@@ -314,6 +340,12 @@ def create_stage(
         prim = body_xform.GetPrim()
         prim.SetCustomDataByKey("simready:semanticLabel", sem_label)
         prim.SetCustomDataByKey("simready:partName", body.name)
+
+        # VLM data provenance — only written when the VLM actually ran for this body.
+        if mdl_mat and mdl_mat.vlm_reasoning_step:
+            prim.SetCustomDataByKey("simready:reasoning_step", mdl_mat.vlm_reasoning_step)
+        if mdl_mat and mdl_mat.vlm_primary_material:
+            prim.SetCustomDataByKey("simready:primary_material", mdl_mat.vlm_primary_material)
 
         quality = compute_quality_score(body, mdl_mat)
         for key, value in quality.items():

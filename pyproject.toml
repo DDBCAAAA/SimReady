@@ -16,6 +16,7 @@ dependencies = [
     "aiohttp>=3.9",
     "py7zr>=0.20",
     "python-dotenv>=1.0",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
