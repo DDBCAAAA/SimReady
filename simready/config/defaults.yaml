@@ -5,7 +5,7 @@ pipeline:
   up_axis: "Z"
   # Vertices are scaled to meters in geometry preprocessing; this must stay 1.0.
   meters_per_unit: 1.0
-  # Output format: "usda" (ASCII, debug), "usdc" (binary, production)
+  # Output format: "usd" (binary, default), "usda" (ASCII, debug), "usdc" (binary, explicit)
   output_format: "usdc"
 
 geometry:

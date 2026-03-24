@@ -345,8 +345,9 @@ simready/
 
 ---
 
-## License
+## ⚖️ License & Commercial Usage
 
-MIT — see [LICENSE](LICENSE).
+This project is dual-licensed to protect open-source integrity while supporting commercial applications:
 
-Assets in `data/` are sourced from open-licensed repositories (FreeCAD community, NIST MBE PMI, ABC Dataset). Individual file licenses are tracked in `data/catalog.json`.
+* **Academic & Open Source:** Free to use, modify, and distribute under the **[AGPLv3 License](LICENSE)**. Note that any derivative works or cloud services utilizing this engine must also be fully open-sourced under AGPLv3.
+* **Commercial Use:** If you are a startup, enterprise, or entity wanting to use the `SimReady` pipeline in a closed-source product, proprietary data generation, or commercial API without open-sourcing your platform, you **MUST obtain a Commercial License**. Please contact the repository owner (`@DDBCAAAA`) to discuss authorization.

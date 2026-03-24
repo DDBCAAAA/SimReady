@@ -103,7 +103,7 @@ def _convert_one(
     material_default: str | None = None,
 ) -> BatchResult:
     """Convert one STEP file. Never raises — all exceptions are caught."""
-    usd_path = output_dir / (step_path.stem + ".usda")
+    usd_path = output_dir / (step_path.stem + ".usd")
 
     file_size = step_path.stat().st_size
     if file_size > _MAX_STEP_BYTES:

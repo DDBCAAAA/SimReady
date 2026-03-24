@@ -26,7 +26,7 @@ def _add_convert_parser(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser("convert", help="Convert a CAD file to Sim-Ready USD")
     p.add_argument("--input", "-i", type=Path, required=True, help="Source CAD file (.step/.stp)")
     p.add_argument("--output", "-o", type=Path, default=None,
-                   help=f"Output USD file path (default: {_DEFAULT_OUTPUT_DIR}/<input_stem>.usda)")
+                   help=f"Output USD file path (default: {_DEFAULT_OUTPUT_DIR}/<input_stem>.usd)")
     p.add_argument("--config", "-c", type=Path, default=None, help="Pipeline config YAML")
 
 
@@ -102,7 +102,7 @@ def _run_convert(args: argparse.Namespace) -> None:
 
     output = args.output
     if output is None:
-        output = _DEFAULT_OUTPUT_DIR / (args.input.stem + ".usda")
+        output = _DEFAULT_OUTPUT_DIR / (args.input.stem + ".usd")
     run(args.input, output, getattr(args, "config", None))
 
 

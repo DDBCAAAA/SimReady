@@ -154,7 +154,7 @@ def convert_acquired_assets(
 
     Args:
         assets: Downloaded STEPAssets (local_path must be set).
-        output_dir: Where to write .usda output files.
+        output_dir: Where to write .usd output files.
         config_path: Optional pipeline config YAML.
 
     Returns:
@@ -177,7 +177,7 @@ def convert_acquired_assets(
             continue
 
         for step_path in step_files:
-            usd_path = output_dir / (step_path.stem + ".usda")
+            usd_path = output_dir / (step_path.stem + ".usd")
             try:
                 pipeline_run(step_path, usd_path, config_path)
                 # Track usd_path on single-file assets (local_path is the file itself)
