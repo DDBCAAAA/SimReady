@@ -722,10 +722,11 @@ def create_stage(
                 Gf.Quatf(1.0, 0.0, 0.0, 0.0)
             )
 
-            print(
-                f"Joint [{joint_prim_name}]: "
-                f"Parent_localPos0 = {tuple(float(v) for v in local_pos_0)}, "
-                f"Child_localPos1 = {tuple(float(v) for v in local_pos_1)}"
+            logger.debug(
+                "Joint [%s]: Parent_localPos0=%s, Child_localPos1=%s",
+                joint_prim_name,
+                tuple(float(v) for v in local_pos_0),
+                tuple(float(v) for v in local_pos_1),
             )
             _log_axis = motion_axis if jtype != JointType.fixed else "N/A"
             logger.info(

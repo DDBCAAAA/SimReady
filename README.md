@@ -46,7 +46,10 @@ OpenUSD (.usda / .usdc)  —  Omniverse-ready, simulation-stable
 
 ## Example: Milling-Machine Vise (Articulated Assembly)
 
+![Milling-Machine Vise — VLM-inferred articulation in Omniverse](assets/8474A27_vise_vlm.png)
+
 **Source:** `data/8474A27_Milling-Machine Vise.STEP` — 14 MB, 22 solid bodies
+**Result USD:** [`examples/8474A27_vise_vlm.usdc`](examples/8474A27_vise_vlm.usdc)
 
 **Command:**
 
@@ -116,7 +119,7 @@ materials:
 ```
 /Root                              Z-up · meters · UsdGeom stage
   /Root/Materials/
-    steel                          OmniPBR MDL shader
+    cast_iron                      OmniPBR MDL shader
                                    + UsdPhysics.MaterialAPI (friction, restitution)
   /Root/<PartName>                 UsdGeom.Xform
     xformOp:translate              world-space CoM position (meters)
@@ -130,11 +133,11 @@ materials:
     /Collision_0 … N               CoACD convex hull(s) — invisible
       CollisionAPI
     customData:
-      simready:semanticLabel       "structural:flange"
-      simready:qualityScore        0.958
+      simready:semanticLabel       "mechanical:shaft"
+      simready:qualityScore        0.82
       simready:watertight          true
       simready:physicsComplete     true
-      simready:materialConfidence  0.72
+      simready:materialConfidence  0.92
 ```
 
 **Articulated assembly (VLM-enabled):**
@@ -327,15 +330,18 @@ simready/
 - World-space `xformOp:translate` on every body Xform (no origin-overlap collapse)
 - Identity quaternion initialisation on all joints (`physics:localRot0/1`)
 - Material confidence gate + quality score as USD `customData`
+- **P3.1** Link-level mass aggregation (parallel-axis theorem across all constituent bodies)
+- Reference USD shipped in `examples/` — `8474A27_vise_vlm.usda` (22-body articulated vise)
 
 ### In Progress 🔧
-- **P3.1** Improved CoM accuracy for PATH A (link-grouped mode): aggregate world-space CoM for link-level MassAPI
 - **P3.2** Full CoACD tuning per-label (tooth count → hull count heuristic for gears)
+- **P3.3** World-space CoM correction for link-level MassAPI (aggregate translated body positions into true link CoM)
 
 ### Planned 📋
 - **P4.1** FEA result overlay — stress/strain fields as USD primvars for training signal
 - **P4.2** Omniverse Kit extension for live preview and quality dashboard
 - **P4.3** Batch IGES + STEP AP242 support
+- **P4.4** Multi-object scene composition — place multiple SimReady assets into a shared stage with collision-free layout
 
 ---
 

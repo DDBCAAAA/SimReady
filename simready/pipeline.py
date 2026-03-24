@@ -196,7 +196,6 @@ def run(
             parts_metadata = {}
             for body in assembly.bodies:
                 meta = {}
-                bbox_raw = body.metadata.get("center_of_mass")  # world pos in m (proxy for bbox centre)
                 if body.vertices is not None and len(body.vertices) > 0:
                     extents = body.vertices.max(axis=0) - body.vertices.min(axis=0)
                     meta["bbox_m"] = (float(extents[0]), float(extents[1]), float(extents[2]))
