@@ -1,9 +1,8 @@
-"""Collision mesh regression tests — verifies CoACD triggers for concave
-industrial parts (flanges, washers, bearings, pipes, brackets, frames).
+"""Collision mesh regression tests — verifies CoACD produces multiple collision
+prims for concave industrial parts (flanges, washers, bearings, pipes, brackets).
 
-TDD-first: these tests verify that 'structural:flange' (and other concave-part
-labels) appear in _DECOMPOSE_LABELS and that the USD exporter writes each hull
-as an independent Collision_<i> prim with PhysicsCollisionAPI applied.
+CoACD runs unconditionally for every body; concave shapes like a torus must
+produce >1 Collision_<i> prim with PhysicsCollisionAPI applied to each.
 
 Key assertion design note:
   content.count("PhysicsCollisionAPI") == number of collision prims
@@ -97,10 +96,10 @@ def test_flange_multi_hull_collision(flange_usd: Path):
     content = flange_usd.read_text()
     count = content.count("PhysicsCollisionAPI")
     assert count > 1, (
-        f"Expected >1 occurrences of 'PhysicsCollisionAPI' for a flange torus body, "
+        f"Expected >1 occurrences of 'PhysicsCollisionAPI' for a torus body, "
         f"got {count}.\n\n"
-        "This means CoACD was NOT triggered for 'structural:flange' — check that\n"
-        "'structural:flange' is listed in _DECOMPOSE_LABELS in simready/usd/assembly.py.\n\n"
+        "CoACD should decompose the concave torus into multiple convex hulls.\n"
+        "Check that create_stage always calls decompose_convex in assembly.py.\n\n"
         "Relevant lines:\n"
         + "\n".join(ln for ln in content.splitlines() if "Collision" in ln or "Physics" in ln)
     )
@@ -143,26 +142,3 @@ def test_flange_collision_prims_are_invisible(flange_usd: Path):
             f"Collision_{i} is missing visibility = 'invisible'"
         )
 
-
-# ---------------------------------------------------------------------------
-# Test 4: whitelist unit tests — all concave labels must be in _DECOMPOSE_LABELS
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("label", [
-    "mechanical:gear",
-    "mechanical:cam",
-    "mechanical:bearing",
-    "fluid_system:pipe",
-    "fluid_system:fitting",
-    "fastener:washer",
-    "structural:flange",
-    "structural:bracket",
-    "structural:frame",
-])
-def test_decompose_label_whitelist(label: str):
-    """Each concave-part semantic label must be in _DECOMPOSE_LABELS."""
-    from simready.usd.assembly import _DECOMPOSE_LABELS
-    assert label in _DECOMPOSE_LABELS, (
-        f"'{label}' is missing from _DECOMPOSE_LABELS — "
-        "parts with this label will get a single hull that blocks their bore/hole."
-    )

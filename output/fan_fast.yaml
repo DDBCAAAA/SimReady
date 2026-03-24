@@ -1,0 +1,10 @@
+geometry:
+  tessellation_tolerance: 0.02   # 20 mm — much faster tessellation for large bodies
+  generate_lods: false           # skip LOD to further reduce time
+
+validation:
+  strict: false                  # allow low-confidence materials without aborting
+  enable_confidence_gate: false  # disable so material classification doesn't block output
+
+materials:
+  enable_vlm: false

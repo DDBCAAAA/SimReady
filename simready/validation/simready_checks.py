@@ -30,12 +30,17 @@ def compute_quality_score(
         simready:physicsComplete     bool
         simready:materialConfidence  float 0.0–1.0
     """
-    try:
-        import trimesh
-        mesh = trimesh.Trimesh(vertices=body.vertices, faces=body.faces, process=False)
-        watertight = bool(mesh.is_watertight)
-    except Exception:
-        watertight = False
+    # Use cached value from geometry phase; fall back to trimesh only when absent.
+    cached = body.metadata.get("computed_is_watertight")
+    if cached is not None:
+        watertight = bool(cached)
+    else:
+        try:
+            import trimesh
+            mesh = trimesh.Trimesh(vertices=body.vertices, faces=body.faces, process=False)
+            watertight = bool(mesh.is_watertight)
+        except Exception:
+            watertight = False
 
     physics_complete = (
         mdl_mat is not None
@@ -117,14 +122,21 @@ def validate_geometry(
                 f"{_MAX_EXTENT_M:.0f} m — check unit conversion"
             )
 
-        # Watertightness — non-watertight meshes produce undefined physics behaviour
-        if _trimesh_available:
+        # Watertightness — non-watertight meshes produce undefined physics behaviour.
+        # Use cached value from geometry phase; fall back to trimesh only if absent.
+        cached_watertight = body.metadata.get("computed_is_watertight")
+        if cached_watertight is not None:
+            is_watertight = cached_watertight
+        elif _trimesh_available:
             mesh = trimesh.Trimesh(vertices=body.vertices, faces=body.faces, process=False)
-            if not mesh.is_watertight:
-                warnings.append(
-                    f"{prefix}: mesh is not watertight — "
-                    "physics simulation may behave incorrectly"
-                )
+            is_watertight = mesh.is_watertight
+        else:
+            is_watertight = True  # can't check — assume ok
+        if not is_watertight:
+            warnings.append(
+                f"{prefix}: mesh is not watertight — "
+                "physics simulation may behave incorrectly"
+            )
 
     passed = len(errors) == 0
     if not passed:

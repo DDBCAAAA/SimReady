@@ -275,7 +275,7 @@ class TestMapCaeToMdlVlm:
         call_kwargs = client_instance.messages.create.call_args
         user_msg = call_kwargs.kwargs["messages"][0]["content"]
         assert "bracket" in user_msg
-        assert "50.0" in user_msg  # 0.05 m → 50.0 mm
+        assert "0.0500m (X)" in user_msg  # 0.05 m strict SI formatting
         assert result.confidence == pytest.approx(0.85)
         assert result.vlm_semantic_label == "structural:bracket"
 
@@ -292,10 +292,10 @@ class TestMapCaeToMdlVlm:
             )
         call_kwargs = client_instance.messages.create.call_args
         user_msg = call_kwargs.kwargs["messages"][0]["content"]
-        # bbox in mm
-        assert "40.0" in user_msg  # 0.04 m → 40.0 mm
-        # volume in scientific notation
-        assert "2.856e-05" in user_msg
+        # bbox in strict SI meters
+        assert "0.0400m (X)" in user_msg  # 0.04 m strict SI formatting
+        # volume in fixed-point cubic meters
+        assert "0.000029 cubic meters" in user_msg
 
     def test_vlm_volume_unknown_when_not_provided(self, monkeypatch):
         """When volume_m3 is None the prompt contains 'unknown' for volume."""

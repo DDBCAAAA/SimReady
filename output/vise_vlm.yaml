@@ -1,0 +1,11 @@
+geometry:
+  tessellation_tolerance: 0.02
+  generate_lods: false
+
+validation:
+  strict: false
+  enable_confidence_gate: false
+
+materials:
+  enable_vlm: true
+  vlm_model: claude-opus-4-6

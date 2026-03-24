@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import numpy as np
 import trimesh
@@ -10,6 +11,36 @@ import trimesh
 from simready.ingestion.step_reader import CADBody
 
 logger = logging.getLogger(__name__)
+
+
+def get_meters_conversion_factor(mesh_unit: str) -> float:
+    """Return the scale factor to convert mesh_unit to meters.
+
+    Handles common engineering unit strings. Falls back to 0.001 (millimeters)
+    with a warning if the unit is unrecognized.
+
+    Args:
+        mesh_unit: Unit string (e.g. 'mm', 'inch', 'cm', 'm').
+
+    Returns:
+        Multiplicative factor such that ``value_in_unit * factor = value_in_meters``.
+    """
+    u = mesh_unit.lower().strip()
+    if u in ("mm", "millimeter", "millimeters", "millimetre", "millimetres"):
+        return 0.001
+    if u in ("in", "inch", "inches"):
+        return 0.0254
+    if u in ("cm", "centimeter", "centimeters", "centimetre", "centimetres"):
+        return 0.01
+    if u in ("m", "meter", "meters", "metre", "metres"):
+        return 1.0
+    if u in ("ft", "foot", "feet"):
+        return 0.3048
+    logger.warning(
+        "Unrecognized unit '%s'; defaulting to millimeters (0.001 scale).",
+        mesh_unit,
+    )
+    return 0.001
 
 
 def cad_body_to_trimesh(body: CADBody) -> trimesh.Trimesh:
@@ -56,6 +87,9 @@ def center_at_com(mesh: trimesh.Trimesh) -> tuple[trimesh.Trimesh, np.ndarray]:
     return centered, com
 
 
+_COACD_MAX_VERTS = 50_000  # pre-decimate collision mesh to this cap before CoACD
+
+
 def decompose_convex(
     mesh: trimesh.Trimesh,
     threshold: float = 0.05,
@@ -74,14 +108,38 @@ def decompose_convex(
     try:
         import coacd
         coacd.set_log_level("error")
+
+        # Pre-decimate large meshes — CoACD only needs shape approximation, not
+        # full visual fidelity, so capping at _COACD_MAX_VERTS keeps runtime bounded.
+        coacd_mesh = mesh
+        n_verts = len(mesh.vertices)
+        if n_verts > _COACD_MAX_VERTS:
+            target_faces = max(4, int(len(mesh.faces) * _COACD_MAX_VERTS / n_verts))
+            try:
+                # trimesh 4.x: use face_count= keyword (first positional is `percent` 0–1)
+                coacd_mesh = mesh.simplify_quadric_decimation(face_count=target_faces)
+                logger.info(
+                    "CoACD pre-decimate: %d → %d vertices (%d → %d faces)",
+                    n_verts, len(coacd_mesh.vertices), len(mesh.faces), len(coacd_mesh.faces),
+                )
+            except Exception as dec_exc:
+                logger.warning("CoACD pre-decimate failed (%s), using full mesh", dec_exc)
+                coacd_mesh = mesh
+
         cm = coacd.Mesh(
-            mesh.vertices.astype(np.float64),
-            mesh.faces.astype(np.int32),
+            coacd_mesh.vertices.astype(np.float64),
+            coacd_mesh.faces.astype(np.int32),
         )
+        logger.info(
+            "CoACD: %d vertices / %d faces — decomposing (this may take a while for large meshes)...",
+            len(coacd_mesh.vertices), len(coacd_mesh.faces),
+        )
+        t0 = time.time()
         parts = coacd.run_coacd(cm, threshold=threshold, max_convex_hull=max_convex_hull)
+        elapsed = time.time() - t0
         result = [(np.asarray(verts, dtype=np.float64), np.asarray(faces, dtype=np.int32))
                   for verts, faces in parts]
-        logger.info("CoACD decomposed mesh into %d convex parts", len(result))
+        logger.info("CoACD decomposed into %d convex parts in %.1fs", len(result), elapsed)
         return result
     except ImportError:
         logger.warning("coacd not installed; falling back to single convex hull")

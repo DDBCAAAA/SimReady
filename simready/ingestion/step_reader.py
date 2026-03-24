@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,6 +35,48 @@ class CADAssembly:
     bodies: list[CADBody] = field(default_factory=list)
     units: str = "mm"  # source file units
     metadata: dict = field(default_factory=dict)
+
+
+def _detect_step_units(path: Path) -> str:
+    """Detect the length unit by parsing the first 100 lines of a STEP file.
+
+    Looks for standard STEP unit declarations:
+      - ``SI_UNIT(.MILLI.,.METRE.)``     → 'mm'
+      - ``SI_UNIT($,.METRE.)``           → 'm'
+      - ``SI_UNIT(.CENTI.,.METRE.)``     → 'cm'
+      - ``CONVERSION_BASED_UNIT('INCH'`` → 'in'
+
+    Falls back to 'mm' with a warning when no declaration is found (most
+    CAD software exports in millimeters by default).
+
+    Returns:
+        Unit string: ``'mm'``, ``'m'``, ``'cm'``, or ``'in'``.
+    """
+    try:
+        with open(path, "r", errors="replace") as fh:
+            head = "".join(fh.readline() for _ in range(100)).upper()
+    except Exception as exc:
+        logger.warning(
+            "Could not read STEP header of %s (%s). Defaulting to millimeters.",
+            path.name, exc,
+        )
+        return "mm"
+
+    if re.search(r"SI_UNIT\s*\(\s*\.MILLI\.\s*,\s*\.METRE\.\s*\)", head):
+        return "mm"
+    if re.search(r"SI_UNIT\s*\(\s*\$\s*,\s*\.METRE\.\s*\)", head):
+        return "m"
+    if re.search(r"SI_UNIT\s*\(\s*\.CENTI\.\s*,\s*\.METRE\.\s*\)", head):
+        return "cm"
+    if re.search(r"CONVERSION_BASED_UNIT\s*\(\s*'INCH", head):
+        return "in"
+
+    logger.warning(
+        "No unit metadata found in first 100 lines of %s. "
+        "Defaulting to millimeters (0.001 scale).",
+        path.name,
+    )
+    return "mm"
 
 
 def read_step(path: Path, tessellation_tolerance: float = 0.001) -> CADAssembly:
@@ -76,20 +119,45 @@ def read_step(path: Path, tessellation_tolerance: float = 0.001) -> CADAssembly:
             "Install with: pip install -e '.[cad]'"
         )
 
+    # --- Detect source units before tessellation ---
+    detected_unit = _detect_step_units(path)
+    logger.info("Detected source unit '%s' in %s", detected_unit, path.name)
+
     # --- Try XDE reader first (preserves PRODUCT names and hierarchy) ---
     shape, product_names = _read_step_xde(path, tessellation_tolerance)
 
-    assembly = CADAssembly(source_path=path)
+    # Count solids for progress display
+    _counter = TopExp_Explorer(shape, TopAbs_SOLID)
+    solid_count = 0
+    while _counter.More():
+        solid_count += 1
+        _counter.Next()
+    logger.info("Found %d solid bodies in %s — tessellating...", solid_count, path.name)
+
+    try:
+        from tqdm import tqdm as _tqdm
+        _pbar = _tqdm(total=solid_count, desc=f"Tessellating {path.stem}", unit="body",
+                      dynamic_ncols=True)
+    except ImportError:
+        _pbar = None
+
+    assembly = CADAssembly(source_path=path, units=detected_unit)
     explorer = TopExp_Explorer(shape, TopAbs_SOLID)
     body_idx = 0
 
     while explorer.More():
-        solid = _solid(explorer.Current())
+        # Capture assembly-level location BEFORE downcast — _solid() preserves the
+        # type but the Location on the original explorer shape is what we need.
+        solid_shape = explorer.Current()
+        solid_location = solid_shape.Location()
+        solid = _solid(solid_shape)
         mesh = BRepMesh_IncrementalMesh(solid, tessellation_tolerance)
         mesh.Perform()
 
         if not mesh.IsDone():
             logger.warning("Tessellation failed for body %d, skipping", body_idx)
+            if _pbar is not None:
+                _pbar.update(1)
             explorer.Next()
             body_idx += 1
             continue
@@ -112,7 +180,8 @@ def read_step(path: Path, tessellation_tolerance: float = 0.001) -> CADAssembly:
             n_nodes = triangulation.NbNodes()
             n_tris = triangulation.NbTriangles()
 
-            # Extract vertices
+            # Extract vertices — BRep_Tool.Triangulation_s sets `location` to the
+            # face's placement within the solid (solid-local coords after transform).
             verts = np.empty((n_nodes, 3), dtype=np.float64)
             for i in range(1, n_nodes + 1):
                 pnt = triangulation.Node(i)
@@ -132,18 +201,41 @@ def read_step(path: Path, tessellation_tolerance: float = 0.001) -> CADAssembly:
             face_explorer.Next()
 
         if all_vertices:
+            verts_array = np.vstack(all_vertices)
+
+            # Bake the solid's assembly-level transform into vertices so every body
+            # lives in world space.  Without this, all bodies cluster at (0,0,0)
+            # because BRep_Tool.Triangulation_s returns solid-local coordinates.
+            if not solid_location.IsIdentity():
+                trsf = solid_location.Transformation()
+                # OCC 3×4 matrix: Value(row 1-3, col 1-4); col 4 = translation.
+                rot = np.array(
+                    [[trsf.Value(r, c) for c in range(1, 4)] for r in range(1, 4)],
+                    dtype=np.float64,
+                )
+                trans = np.array([trsf.Value(r, 4) for r in range(1, 4)], dtype=np.float64)
+                verts_array = verts_array @ rot.T + trans
+
             # Use extracted product name when available; fall back to body index
             body_name = product_names.get(body_idx, f"body_{body_idx}")
+            print(f"Part: {body_name}, World Centroid: {verts_array.mean(axis=0)}")
+            if _pbar is not None:
+                _pbar.set_postfix(name=body_name[:20], verts=len(verts_array))
             body = CADBody(
                 name=body_name,
-                vertices=np.vstack(all_vertices),
+                vertices=verts_array,
                 faces=np.vstack(all_faces),
                 material_name=body_name,
             )
             assembly.bodies.append(body)
 
+        if _pbar is not None:
+            _pbar.update(1)
         explorer.Next()
         body_idx += 1
+
+    if _pbar is not None:
+        _pbar.close()
 
     logger.info("Read %d bodies from %s", len(assembly.bodies), path.name)
     return assembly

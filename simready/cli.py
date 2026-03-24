@@ -79,6 +79,15 @@ def _add_batch_parser(subparsers: argparse._SubParsersAction) -> None:
                    help="Default material class for all assets (e.g. steel, aluminum, nylon)")
 
 
+def _add_sldprt_parser(subparsers: argparse._SubParsersAction) -> None:
+    p = subparsers.add_parser("sldprt2step", help="Convert a SolidWorks SLDPRT file to STEP")
+    p.add_argument("input", type=Path, help="Input .sldprt file")
+    p.add_argument("output", type=Path, nargs="?", default=None,
+                   help="Output .step file (default: same name/location as input)")
+    p.add_argument("--client-id",     default=None, help="Autodesk APS Client ID (or set AUTODESK_CLIENT_ID)")
+    p.add_argument("--client-secret", default=None, help="Autodesk APS Client Secret (or set AUTODESK_CLIENT_SECRET)")
+
+
 def _add_tag_parser(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser("tag", help="Manually curate an asset in the catalog")
     p.add_argument("asset_id", type=int, help="Catalog asset ID (from simready catalog)")
@@ -251,6 +260,19 @@ def _run_batch(args: argparse.Namespace) -> None:
     print_batch_summary(results)
 
 
+def _run_sldprt(args: argparse.Namespace) -> None:
+    from simready.ingestion.sldprt_converter import convert_sldprt
+
+    src = args.input
+    dst = args.output or src.with_suffix(".step")
+    step_path = convert_sldprt(
+        src, dst,
+        autodesk_client_id=args.client_id,
+        autodesk_client_secret=args.client_secret,
+    )
+    print(f"Converted: {src} → {step_path}  ({step_path.stat().st_size // 1024} KB)")
+
+
 def _run_tag(args: argparse.Namespace) -> None:
     from simready.catalog.db import open_db, get_asset, update_asset_fields
 
@@ -313,6 +335,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_run_parser(subparsers)
     _add_batch_parser(subparsers)
     _add_tag_parser(subparsers)
+    _add_sldprt_parser(subparsers)
 
     args = parser.parse_args(argv)
 
@@ -334,6 +357,8 @@ def main(argv: list[str] | None = None) -> None:
             _run_batch(args)
         elif args.command == "tag":
             _run_tag(args)
+        elif args.command == "sldprt2step":
+            _run_sldprt(args)
     except Exception as e:
         logging.getLogger("simready").error("%s", e)
         sys.exit(1)

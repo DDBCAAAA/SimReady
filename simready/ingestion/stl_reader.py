@@ -36,6 +36,17 @@ def read_mesh(path: Path) -> CADAssembly:
     loaded = trimesh.load(str(path), force="mesh")
     assembly = CADAssembly(source_path=path)
 
+    # trimesh sets .units for some formats (e.g. GLTF, 3MF); propagate when present.
+    raw_units = getattr(loaded, "units", None)
+    if raw_units:
+        assembly.units = str(raw_units)
+        logger.info("Detected trimesh units '%s' from %s", raw_units, path.name)
+    else:
+        logger.warning(
+            "No unit metadata found in %s. Defaulting to millimeters (0.001 scale).",
+            path.name,
+        )
+
     if isinstance(loaded, trimesh.Scene):
         for name, mesh in loaded.geometry.items():
             _append_body(assembly, mesh, name)
