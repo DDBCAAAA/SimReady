@@ -1,274 +1,393 @@
-# SimReady-500: Roadmap to a Citeable Industrial Parts Dataset
+# SimReady: AIGC-to-SimReady Refinery Roadmap
 
 ## Strategic Foundation
 
-**Target:** The definitive physics-annotated industrial parts dataset for simulated robotic assembly and bin picking.
+**Target:** The definitive pipeline for converting raw AIGC 3D outputs into physics-annotated, simulation-ready OpenUSD assets — enabling anyone with a text prompt to produce assets that work in MuJoCo, Isaac Lab, and ROS out of the box.
 
-**Why this niche, why now:** Factory automation — bin picking, kitting, assembly — is the fastest-growing segment of commercial robotics (Covariant, Dexterity, Flexiv, Realtime Robotics). Every team trains in simulation. No open dataset provides industrial parts with physics properties. NVIDIA Warehouse (753 assets) covers logistics objects (boxes, shelves, pallets) but not the parts that go on them.
+**Why this, why now:** Text-to-3D models (TRELLIS, Tripo, Meshy, Rodin, InstantMesh) can now generate plausible 3D geometry in seconds. But every output is physically useless — wrong scale, random pose, broken geometry, no mass, no collision, no materials. The gap between "generated mesh" and "simulation-ready asset" is 100% manual labor today. SimReady closes that gap automatically.
 
-**Scope:** 500 curated industrial mechanical parts across 8 categories. Every asset ships with physics annotations (density, friction, restitution, inertia tensor), semantic labels, collision meshes, and a quality score. Small enough to manually verify every asset. Large enough to be useful — NVIDIA Warehouse has 753, YCB has 77, Google Scanned Objects has 1K.
+**Core insight:** The hard physics problems (convex decomposition, analytical inertia, USD schema assembly) are already solved in our backend. The unsolved problem is the **frontend**: healing the specific pathologies of AIGC meshes before they reach the physics core. That frontend is the entire focus of this roadmap.
 
-### The moat
-
-No single feature is unique. The combination is:
-
-1. **Physics annotations with confidence tracking** — density, friction, restitution from engineering material databases; each property carries a provenance score (0.0 = estimated, 1.0 = from source)
-2. **Industrial-part focus** — the exact category bin-picking and assembly robots need, not general 3D objects
-3. **Per-asset quality score** — `qualityScore`, `watertight`, `physicsComplete` in machine-readable metadata; enables programmatic filtering
-4. **Multi-format** — USD + URDF + MJCF from one source; works in Isaac Lab, MuJoCo, ManiSkill, ROS without conversion
-5. **Reproducible open pipeline** — `simready convert` on any STEP file; the tool is as citable as the dataset
-
-### Honest constraints
-
-Physics annotations come from engineering handbook defaults matched by material name classification, not from embedded CAE data in the STEP files. The pipeline tracks this via confidence scoring. The paper must be transparent about this methodology.
+**Architectural principle:** Two-stage pipeline. The AIGC Mesh Healer (frontend) produces clean, real-scale, canonically-posed meshes. The Physics Core (backend, existing) takes those clean meshes and produces SimReady USD. The backend is frozen — do not rewrite it.
 
 ---
 
-## Dataset Composition (500 assets)
+## What Already Exists (Backend — DO NOT REWRITE)
 
-| Category | Count | Primary source | Example parts |
-|---|---|---|---|
-| Fasteners | 120 | FreeCAD DIN/ISO library | M8 hex bolt, M6 nut, lock washer, socket cap screw |
-| Gears | 60 | FreeCAD + GitHub | Spur gear, bevel gear, worm gear, rack |
-| Brackets & plates | 60 | FreeCAD + NIST | L-bracket, mounting plate, angle bracket, gusset |
-| Housings & enclosures | 50 | FreeCAD + GitHub | Motor housing, junction box, bearing housing |
-| Connectors & fittings | 50 | FreeCAD | Pipe elbow, flange, coupling, tee fitting |
-| Shafts, bearings & bushings | 50 | FreeCAD + ABC Dataset | Shoulder bolt, linear bearing, shaft collar |
-| Valves & pipe components | 40 | FreeCAD | Ball valve, check valve, pipe clamp |
-| Misc mechanical | 70 | Mixed | Spring, clamp, spacer, retaining ring, key, pin |
+| Component | Module | Status |
+|---|---|---|
+| CoACD convex decomposition | `geometry/mesh_processing.py` | Done |
+| Analytical mass/inertia (trimesh) | `geometry/mesh_processing.py` | Done |
+| USD schema assembly (usd-core) | `usd/assembly.py` | Done |
+| VLM material inference (Claude API) | `acquisition/vlm_material.py` + `materials/material_map.py` | Done |
+| Quality scoring + validation | `validation/simready_checks.py` | Done |
+| Provenance embedding in USD | `usd/assembly.py` | Done |
+| SQLite asset catalog | `catalog/db.py` | Done |
+| 25+ material classes with physics | `materials/material_map.py` | Done |
 
-All 500 assets must pass: `physicsComplete=true`, `qualityScore >= 0.7`, `watertight=true`.
-
----
-
-## Milestone 0 — Close the Quality Gap [DONE]
-**Completed: March 2026**
-
-| Item | Status |
-|---|---|
-| Inertia tensor (`MassAPI.diagonalInertia` + `principalAxes`) | Done |
-| Center-of-mass pivot normalization | Done |
-| STEP product name extraction (XDE) | Done |
-| Per-asset quality score | Done |
-| Tests | 79/79 passing |
+These modules accept clean `trimesh.Trimesh` objects and produce complete SimReady USD. They are the stable foundation everything below builds on.
 
 ---
 
-## Milestone 1 — Curate the 500
+## Phase 1 — AIGC Data Generation & Ingestion
 **Target: April 2026**
 
-### 1a. Expand material classification (7 → 25+ classes)
+### 1a. Text-to-3D batch generation
 
-Highest-leverage change. Currently only 7 material classes produce `physicsComplete=true`. Industrial parts use many more materials.
-
-Add to `_MATERIAL_CLASS_DEFAULTS`:
-
-| Class | density (kg/m³) | friction_s | Covers |
-|---|---|---|---|
-| stainless | 8000 | 0.55 | Stainless steel fasteners, food-grade parts |
-| cast_iron | 7200 | 0.50 | Housings, brackets, valve bodies |
-| titanium | 4500 | 0.36 | Aerospace fasteners, high-strength parts |
-| brass | 8500 | 0.35 | Fittings, connectors, bushings |
-| bronze | 8800 | 0.40 | Bearings, bushings, worm gears |
-| nylon | 1150 | 0.35 | Gears, spacers, cable ties |
-| ptfe | 2200 | 0.04 | Seals, low-friction bearings |
-| acetal | 1410 | 0.30 | Precision gears, cam followers |
-| polycarbonate | 1200 | 0.45 | Enclosures, guards, covers |
-| carbon_fiber | 1600 | 0.35 | Structural panels, drone parts |
-| zinc | 7130 | 0.40 | Die-cast housings, brackets |
-| ceramic | 3900 | 0.50 | Insulators, bearings |
-| chrome | 7190 | 0.40 | Plated shafts, pins |
-
-Also improve `classify_material()` to handle compound names: "stainless_steel" → stainless, "abs_plastic" → plastic_abs, "alu_6061" → aluminum.
-
-### 1b. Manual curation pipeline
-
-At 500 assets, manual curation is feasible and essential. Process:
+Write a generation client that takes a list of text prompts and produces raw `.glb`/`.obj` meshes. Target model: **TRELLIS** (open-source, runs locally or via API). Fallback: **Tripo** API.
 
 ```bash
-# 1. Batch-acquire candidates from FreeCAD + GitHub
-simready batch --source freecad --category fasteners --max-assets 200
+# Generate from a prompt list
+simready generate --prompts prompts.txt --output-dir ./data/aigc_raw/ --model trellis
 
-# 2. Auto-convert and score
-simready batch --convert --quality-min 0.7
-
-# 3. Review flagged assets (watertight=false, low confidence)
-simready catalog --filter "quality_score < 0.7" --format table
-
-# 4. Manually assign material class where auto-classification fails
-simready tag asset_id --material steel --category fastener:bolt
+# prompts.txt format (one per line):
+# microwave oven, household appliance
+# office chair with armrests
+# ceramic coffee mug
+# stainless steel toaster
 ```
 
-Every asset in the final dataset must be human-verified at least once.
+Deliverables:
+- `simready/generation/trellis_client.py` — TRELLIS API/local inference wrapper. Input: text prompt. Output: `.glb` file path.
+- `simready/generation/tripo_client.py` — Tripo REST API client (API key auth). Fallback generator.
+- `simready/generation/prompt_manager.py` — Reads prompt lists (`.txt`, `.csv`), tracks generation status (pending/done/failed), writes manifest file mapping `prompt → output_path → object_type`.
+- `prompts.txt` — Seed list of 100+ object prompts spanning household, kitchen, office, workshop categories.
 
-### 1c. Batch pipeline
+### 1b. Raw mesh ingestion
 
-- `simready batch` — async acquire + convert + score in one command
-- Per-asset error isolation (one failure doesn't kill the batch)
-- Progress reporting: processed / passed / failed / skipped
-- `--workers N` for parallel conversion
+Support loading all common AIGC output formats:
+- `.glb` / `.gltf` — TRELLIS, Tripo, Meshy default output
+- `.obj` — universal fallback
+- `.fbx` — some commercial generators
+- `.ply` — point-cloud-to-mesh pipelines
 
-### 1d. SQLite catalog
+All loading via `trimesh.load()`. For `.glb` scene graphs with multiple meshes, concatenate into a single `trimesh.Trimesh` (AIGC models are single objects, not assemblies).
 
-Replace `data/catalog.json` with `data/catalog.db`:
-- Indexed by: category, material class, quality score, physics completeness
-- `simready catalog --query "category=fastener AND material_class=steel"` < 1s
-- JSON export: `simready catalog --format json`
-
-**Exit criterion:** 500 assets in catalog, all with `physicsComplete=true` and `qualityScore >= 0.7`. Category distribution matches the table above (within +/-20%).
+**Exit criterion:** 100+ raw AIGC meshes generated and saved to `data/aigc_raw/`. Manifest file tracks prompt, model, object type, and file path for each.
 
 ---
 
-## Milestone 2 — Multi-Format Export
+## Phase 2 — The AIGC Mesh Healer
+**Target: April–May 2026**
+
+This is the core new work. Three modules that clean raw AIGC geometry into backend-ready meshes.
+
+### 2a. `simready/aigc/mesh_cleaner.py` — Geometry Healing
+
+The single most impactful module. AIGC meshes are broken in predictable ways. Fix them all, in order:
+
+```python
+def heal(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Clean an AIGC mesh for physics simulation."""
+    # 1. Keep largest connected component
+    #    AIGC models produce floating fragments, stray planes, internal geometry.
+    #    Split by connectivity, keep the component with the most faces.
+    components = mesh.split(only_watertight=False)
+    mesh = max(components, key=lambda c: len(c.faces))
+
+    # 2. Remove degenerate faces (near-zero area)
+    #    These cause NaN in normal computation and physics solver divergence.
+    areas = mesh.area_faces
+    mesh.update_faces(areas > 1e-10)
+
+    # 3. Remove unreferenced vertices
+    mesh.remove_unreferenced_vertices()
+
+    # 4. Merge duplicate vertices
+    #    AIGC exporters duplicate vertices at UV seams. Merge within tolerance.
+    mesh.merge_vertices(merge_tex=True, merge_norm=True)
+
+    # 5. Fix winding / normals
+    trimesh.repair.fix_normals(mesh)
+    trimesh.repair.fix_winding(mesh)
+
+    # 6. Fill holes → attempt watertight
+    trimesh.repair.fill_holes(mesh)
+    #    Log warning if still non-watertight (backend handles bbox fallback)
+
+    return mesh
+```
+
+Metrics to log per mesh:
+- Vertices before/after
+- Faces before/after
+- Components found (how many dropped)
+- Watertight after repair? (bool)
+- Degenerate faces removed count
+
+### 2b. `simready/aigc/spatial_aligner.py` — Pose Alignment & Scale Normalization
+
+Two problems, one module:
+
+**Pose alignment (PCA):**
+```python
+def align_pose(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Align mesh principal axes to world XYZ, Z-up."""
+    # Covariance matrix of vertex positions
+    centered = mesh.vertices - mesh.vertices.mean(axis=0)
+    cov = np.cov(centered, rowvar=False)
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+
+    # Sort by eigenvalue descending: largest variance → X, smallest → Z
+    order = np.argsort(eigenvalues)[::-1]
+    rotation = eigenvectors[:, order].T
+
+    # Ensure right-handed coordinate system
+    if np.linalg.det(rotation) < 0:
+        rotation[2] *= -1
+
+    mesh.apply_transform(np.eye(4))  # ... build 4x4 from rotation
+    # Snap bottom of bounding box to Z=0
+    mesh.vertices[:, 2] -= mesh.vertices[:, 2].min()
+    return mesh
+```
+
+**Scale normalization:**
+```python
+OBJECT_DIMENSIONS = {
+    # Object type → [W, H, D] in meters (real-world bounding box)
+    "microwave":        [0.50, 0.36, 0.30],
+    "chair":            [0.50, 0.85, 0.50],
+    "office_chair":     [0.65, 1.10, 0.65],
+    "mug":              [0.08, 0.10, 0.08],
+    "laptop":           [0.33, 0.02, 0.23],
+    "toaster":          [0.30, 0.20, 0.18],
+    "bottle":           [0.07, 0.25, 0.07],
+    "keyboard":         [0.45, 0.03, 0.15],
+    "monitor":          [0.55, 0.35, 0.05],
+    "desk_lamp":        [0.20, 0.45, 0.20],
+    "trash_can":        [0.30, 0.40, 0.30],
+    "bookshelf":        [0.80, 1.80, 0.30],
+    "nightstand":       [0.50, 0.55, 0.40],
+    "washing_machine":  [0.60, 0.85, 0.60],
+    "refrigerator":     [0.70, 1.75, 0.70],
+    "toilet":           [0.40, 0.40, 0.70],
+    "bathtub":          [1.50, 0.50, 0.70],
+    "sofa":             [2.00, 0.85, 0.90],
+    "dining_table":     [1.20, 0.75, 0.80],
+    "bed":              [2.00, 0.60, 1.50],
+    # ... extend as categories grow
+}
+
+def normalize_scale(mesh: trimesh.Trimesh, object_type: str) -> trimesh.Trimesh:
+    """Scale mesh to real-world dimensions in meters."""
+    if object_type in OBJECT_DIMENSIONS:
+        target = max(OBJECT_DIMENSIONS[object_type])
+        current = max(mesh.bounding_box.extents)
+        scale_factor = target / current
+        mesh.apply_scale(scale_factor)
+    else:
+        # Fallback: assume current max extent should be 0.3m (generic small object)
+        # Or defer to VLM dimension estimation
+        pass
+    return mesh
+```
+
+### 2c. `simready/aigc/healer.py` — Healer Orchestrator
+
+Ties the cleaning steps together into a single callable:
+
+```python
+def heal_aigc_mesh(
+    input_path: Path,
+    object_type: str,
+    output_path: Path | None = None,
+) -> trimesh.Trimesh:
+    """Full AIGC mesh healing pipeline: load → clean → align → scale."""
+    mesh = trimesh.load(input_path, force='mesh')
+    mesh = clean(mesh)           # mesh_cleaner.heal()
+    mesh = align_pose(mesh)      # spatial_aligner.align_pose()
+    mesh = normalize_scale(mesh, object_type)  # spatial_aligner.normalize_scale()
+    if output_path:
+        mesh.export(output_path)
+    return mesh
+```
+
+**Exit criterion:** Healer processes 100 raw AIGC meshes. Success metrics:
+- ≥90% become watertight after healing
+- ≥95% have bounding box within 2× of target dimensions
+- Zero meshes have degenerate faces or unreferenced vertices
+- All meshes are Z-up with bottom on ground plane
+
+---
+
+## Phase 3 — Integration with Existing Physics Core
 **Target: May 2026**
 
-Every asset ships in every format a robotics lab might need. At 500 assets, we can afford to verify every export.
+### 3a. Pipeline orchestrator
 
-```
-simready-500/
-  fasteners/
-    bolt_m8_hex/
-      ├── bolt_m8_hex.usd         (Omniverse / Isaac Lab)
-      ├── bolt_m8_hex.urdf        (ROS / MoveIt)
-      ├── bolt_m8_hex.xml         (MuJoCo / ManiSkill)
-      ├── meshes/
-      │   ├── visual.obj          (shared visual mesh)
-      │   └── collision.obj       (convex hull)
-      ├── renders/
-      │   ├── view_000.png        (8 × RGB)
-      │   ├── view_000_depth.exr  (8 × depth)
-      │   └── view_000_normal.png (8 × normals)
-      └── metadata.json
-  gears/
-    spur_gear_m2/
-      └── ...
-```
+Write the end-to-end flow that connects the healer output to the existing backend:
 
-### Work items
+```python
+def aigc_to_simready(
+    input_path: Path,
+    output_path: Path,
+    object_type: str,
+    enable_vlm: bool = True,
+) -> Path:
+    """AIGC mesh → SimReady USD, end-to-end."""
+    # Stage 1: Frontend — heal the mesh
+    clean_mesh = heal_aigc_mesh(input_path, object_type)
 
-- `simready/export/urdf_writer.py` — body hierarchy, inertial (mass, inertia tensor from USD), collision + visual meshes as OBJ references
-- `simready/export/mjcf_writer.py` — geom, body, inertial, friction/condim from physics material
-- `simready/render/headless.py` — BlenderProc headless: 8 azimuth views at 30° elevation, 512×512, neutral studio HDRI
-- `metadata.json` schema per asset:
-
-```json
-{
-  "name": "bolt_m8_hex",
-  "category": "fastener:bolt",
-  "material_class": "steel",
-  "physics": {
-    "density_kg_m3": 7850.0,
-    "friction_static": 0.55,
-    "friction_dynamic": 0.42,
-    "restitution": 0.3,
-    "inertia_principal": [0.001, 0.001, 0.0005],
-    "mass_kg": 0.032
-  },
-  "quality": {
-    "score": 0.92,
-    "watertight": true,
-    "physics_complete": true,
-    "material_confidence": 0.25
-  },
-  "source": {
-    "url": "https://github.com/FreeCAD/FreeCAD-library/...",
-    "license": "LGPL-2.1",
-    "pipeline_version": "0.3.0"
-  },
-  "geometry": {
-    "vertices": 2841,
-    "faces": 5678,
-    "lod_levels": 3,
-    "bounding_box_m": [0.013, 0.013, 0.025]
-  }
-}
+    # Stage 2: Backend — existing physics pipeline
+    #   - CoACD convex decomposition
+    #   - Analytical mass/inertia via trimesh
+    #   - VLM material inference (if enabled)
+    #   - USD assembly via usd-core
+    return pipeline.run(
+        mesh=clean_mesh,
+        output_path=output_path,
+        enable_vlm=enable_vlm,
+        asset_metadata={
+            "aigc:model": "trellis",
+            "aigc:prompt": object_type,
+            "aigc:healer_version": "1.0",
+        },
+    )
 ```
 
-**Exit criterion:** All 500 assets have USD + URDF + MJCF + metadata.json + renders. Spot-check: 20 random assets load correctly in Isaac Lab, MuJoCo, and RViz.
+### 3b. CLI integration
+
+Extend `cli.py` with AIGC-specific commands:
+
+```bash
+# Single mesh
+simready heal --input chair.glb --output chair.usda --object-type chair --vlm
+
+# Batch (reads manifest CSV: prompt, file_path, object_type)
+simready heal-batch --input-dir ./data/aigc_raw/ --output-dir ./output/ --manifest prompts.csv --vlm
+
+# Generate + heal in one shot
+simready generate-and-heal --prompts prompts.txt --output-dir ./output/ --model trellis --vlm
+```
+
+### 3c. Batch processing with error isolation
+
+- Per-mesh error isolation — one broken mesh doesn't kill the batch
+- Progress: `[47/100] chair_003.glb → chair_003.usda (watertight=true, quality=0.87)`
+- Summary report: processed / healed / failed / quality distribution
+- `--workers N` for parallel healing (CPU-bound, scales with cores)
+
+**Exit criterion:** 100 AIGC meshes converted end-to-end to SimReady USD. All pass `physicsComplete=true`. ≥80% pass `qualityScore >= 0.7`. Batch pipeline handles failures gracefully.
 
 ---
 
-## Milestone 3 — Publication
-**Target: June 2026**
+## Phase 4 — VLM Quality Assurance
+**Target: May–June 2026**
 
-### 3a. HuggingFace dataset
+### 4a. Automated visual QA
+
+After USD generation, render 8-azimuth preview images and pass to Claude VLM for automated verification:
+
+```python
+def vlm_quality_check(usd_path: Path, object_type: str) -> QAResult:
+    """VLM-based quality assurance on generated SimReady asset."""
+    renders = render_previews(usd_path, n_views=8)
+    response = claude_api.analyze(
+        images=renders,
+        prompt=f"""
+        This is a 3D asset meant to represent: {object_type}
+        Evaluate:
+        1. Does the geometry look correct for this object type? (1-10)
+        2. Is the pose reasonable (upright, resting on ground)? (yes/no)
+        3. Does the scale look physically plausible? (yes/no)
+        4. Are there visible artifacts (floating parts, holes, spikes)? (yes/no)
+        5. Suggested semantic tags for this object.
+        """
+    )
+    return parse_qa_response(response)
+```
+
+### 4b. QA-gated pipeline
+
+Integrate VLM QA as an optional final gate:
+- Assets scoring ≥7/10 geometry → pass
+- Assets scoring <7/10 → quarantine with VLM reasoning for manual review
+- Semantic tags from VLM → written to USD `SemanticsAPI` prims
+
+### 4c. Feedback loop
+
+VLM QA results feed back into the healer:
+- If VLM flags "wrong orientation" → re-run pose alignment with alternative heuristic
+- If VLM flags "wrong scale" → request VLM dimension estimate, re-scale
+- If VLM flags "floating artifacts" → re-run connected component filter with stricter threshold
+
+**Exit criterion:** VLM QA runs on all 100 assets. ≥85% pass on first attempt. Quarantined assets have actionable VLM reasoning. Feedback loop demonstrates measurable improvement on re-processing.
+
+---
+
+## Phase 5 — Dataset Publication & Benchmarks
+**Target: June–July 2026**
+
+### 5a. HuggingFace dataset
 
 ```python
 from datasets import load_dataset
-ds = load_dataset("simready/industrial-parts-500", split="train")
+ds = load_dataset("simready/aigc-objects", split="train")
 asset = ds[0]  # renders, metadata, USD/URDF/MJCF blobs
 ```
 
-- Dataset card: category breakdown, physics property distributions, quality histograms, license composition
-- `simready push --hf-repo simready/industrial-parts-500`
+Dataset card: object type distribution, quality histograms, material class breakdown, AIGC model provenance, healer success rates.
 
-### 3b. Simulation benchmarks
+### 5b. Simulation benchmarks
 
-Reproducible scripts in `benchmarks/`. Two experiments, three conditions each:
+Validate that healed AIGC assets actually work in physics engines. Three experiments, run in both MuJoCo and Isaac Lab:
 
-**Condition A:** SimReady assets with full physics (curated density, friction, restitution, inertia)
-**Condition B:** Same meshes, uniform default physics (density=1000, friction=0.5, restitution=0.3)
-**Condition C:** Same meshes, no physics (density=1, friction=0, restitution=0)
+**Experiment 1 — Drop-test stability:**
+Drop all assets onto a flat surface. Measure: penetration depth, settling time, rest-state stability. Compare SimReady assets (healed + physics) vs. raw AIGC meshes (no healing, default physics). Expected: raw meshes explode or fall through; healed assets settle correctly.
 
-**Experiment 1 — Drop-test stability (Isaac Sim):**
-Drop all 500 objects onto a flat surface. Measure penetration depth, settling time, rest-state stability. Expected result: Condition A settles correctly; C falls through or bounces infinitely.
+**Experiment 2 — Grasp success:**
+Franka parallel-jaw grasping on 50 healed assets. 1000 trials per condition. Metric: grasp success rate + post-grasp slip. Compare full-physics assets vs. uniform-default-physics assets. Expected: VLM-inferred friction/density → higher grasp success.
 
-**Experiment 2 — Bin-picking grasp success (Isaac Lab):**
-Franka parallel-jaw grasping from a bin of 50 randomly selected parts. 1000 trials per condition. Metric: grasp success rate + post-grasp slip rate. Expected result: Condition A has higher grasp success because friction is realistic; C has excessive slip.
+**Experiment 3 — Scale correctness:**
+Place healed assets in a reference scene (kitchen counter, desk, shelf). VLM evaluates whether objects appear correctly sized relative to the environment. This validates the dimension dictionary + scale normalization.
 
-Both experiments scripted, single-GPU reproducible: `python benchmarks/run_drop_test.py`, `python benchmarks/run_bin_pick.py`.
+```bash
+python benchmarks/run_drop_test.py --engine mujoco --assets ./output/
+python benchmarks/run_drop_test.py --engine isaac --assets ./output/
+python benchmarks/run_grasp_test.py --assets ./output/
+python benchmarks/run_scale_eval.py --assets ./output/
+```
 
-### 3c. Paper
+### 5c. Paper
 
-**Title:** *SimReady-500: Physics-Annotated Industrial Parts for Simulated Robotic Assembly*
+**Title:** *From Text Prompt to Physics-Ready: Automated Refinement of AIGC 3D Meshes for Robotic Simulation*
 
-**Thesis:** Physics annotations on industrial parts — density, friction, inertia from engineering material databases — measurably improve simulation fidelity for bin-picking and assembly tasks. We release a curated, multi-format dataset of 500 parts with transparent quality scoring.
+**Thesis:** Raw AIGC 3D meshes can be automatically refined into physics-annotated SimReady assets through a systematic pipeline of geometry healing, scale normalization, pose alignment, and analytical physics injection — closing the gap between generative AI and robotic simulation without manual intervention.
 
 **Structure:**
-1. **Introduction** — sim2real gap in industrial manipulation; existing datasets lack physics
-2. **Pipeline** — STEP → USD conversion, material classification, quality scoring (reproducible, open-source)
-3. **Dataset** — 500 parts, 8 categories, statistics, category/material distributions
-4. **Benchmarks** — drop-test stability + bin-picking grasp success across three physics conditions
-5. **Comparison** — SimReady vs. ShapeNet vs. Objaverse vs. ABC Dataset vs. NVIDIA Warehouse (feature matrix)
-6. **Limitations** — material properties from handbook defaults, keyword classification coverage, no articulated assemblies
+1. **Introduction** — AIGC 3D explosion, sim-to-real gap, manual asset prep bottleneck
+2. **Related work** — AIGC 3D models (TRELLIS, Tripo, Meshy), sim-ready standards (NVIDIA SimReady, USD), existing datasets (Objaverse, ShapeNet, Google Scanned Objects)
+3. **Pipeline** — Two-stage: AIGC Healer (PCA alignment, scale normalization, geometry healing) + Physics Core (CoACD, trimesh analytics, USD assembly). Pure Python, `pip install`.
+4. **The AIGC Mesh Healer** — detailed ablation: what breaks without each step (no cleaning → solver explosion, no scaling → microscopic/giant objects, no alignment → sideways furniture)
+5. **Benchmarks** — drop-test, grasp, scale correctness across MuJoCo + Isaac Lab
+6. **VLM QA** — automated quality assurance, semantic tagging, feedback loop
+7. **Limitations** — PCA alignment fails on symmetric objects, dimension dictionary requires curation, VLM material inference is probabilistic not deterministic, no articulation support
 
 **Target venues:** CoRL 2026, RA-L rolling, ICRA 2027. arXiv preprint immediately.
 
-**Exit criterion:** arXiv live, HuggingFace published, benchmarks reproducible.
-
----
-
-## Milestone 4 — Ecosystem Integration
-**Target: July+ 2026, ongoing**
-
-- **`simready.load()` API**: `simready.load("fastener:bolt", format="mjcf", min_quality=0.8)`
-- **Isaac Lab loader**: PR to `isaac-lab/isaac-lab` with `SimReadyAssetCfg`
-- **ManiSkill integration**: SimReady as built-in asset source
-- **Procedural augmentation**: texture/scale/material variation from single master — multiply 500 → 5000 training variants
-- **Assembly hierarchy**: STEP assembly tree → nested USD Xforms; kinematic joints → `UsdPhysics.RevoluteJoint`
-- **v2 expansion**: grow from 500 → 2000 by adding categories (electrical components, pneumatics, sensors)
+**Exit criterion:** arXiv live, HuggingFace published, benchmarks reproducible in MuJoCo + Isaac Lab.
 
 ---
 
 ## Execution Timeline
 
 ```
-Mar 2026  ████ M0: Quality gap closed (DONE)
-Apr 2026  ████████ M1: 500 curated industrial parts, material expansion, batch pipeline
-May 2026  ████████████ M2: Multi-format export (URDF, MJCF, renders, metadata.json)
-Jun 2026  ████████████████ M3: Paper + HuggingFace + benchmarks
-Jul+      ████████████████ M4: Isaac Lab PR, ManiSkill, simready.load(), augmentation
+Apr 2026   ████ Phase 1: AIGC generation + ingestion (TRELLIS client, prompt lists, 100 raw meshes)
+Apr–May    ████████ Phase 2: AIGC Mesh Healer (mesh_cleaner, spatial_aligner, healer orchestrator)
+May 2026   ████████████ Phase 3: Backend integration (pipeline orchestrator, CLI, batch processing)
+May–Jun    ████████████████ Phase 4: VLM Quality Assurance (auto QA, feedback loop)
+Jun–Jul    ████████████████████ Phase 5: Publication (HuggingFace, benchmarks, paper)
 ```
 
 ---
 
-## Why This Gets Cited
+## Why This Matters
 
-1. **The only physics-annotated industrial parts dataset** — density, friction, inertia on every asset, with provenance tracking
-2. **Purpose-built for bin picking and assembly** — the exact objects factory-automation labs need, not general 3D meshes
-3. **Multi-format from one source** — USD + URDF + MJCF; works in Isaac Lab, MuJoCo, ManiSkill, ROS without conversion
-4. **500 verified assets > 50K unverified** — every asset human-reviewed, 100% physics complete, 100% watertight
-5. **Benchmark proof** — drop-test and bin-picking experiments quantify the value of physics annotations
-6. **Reproducible pipeline** — labs can run `simready convert` on their own STEP files; tool + dataset both citable
-
-Comparable datasets by scale: NVIDIA Warehouse (753), YCB (77), Google Scanned Objects (1K), ContactDB (50). SimReady-500 fits squarely in the range that gets cited.
+1. **Closes the AIGC-to-simulation gap** — no other tool automatically converts text-to-3D outputs into physics-ready assets
+2. **Pure Python, zero dependencies** — `pip install simready`, run on a laptop. No Docker, no GPU, no Omniverse.
+3. **Analytically sound physics** — not heuristic mass/inertia; computed from mesh geometry + material density via trimesh
+4. **VLM-in-the-loop** — material inference AND quality assurance powered by vision-language models
+5. **Engine-agnostic output** — SimReady USD works in Isaac Lab, MuJoCo, ManiSkill, ROS without format conversion
+6. **Benchmark proof** — quantitative evidence that healing + physics annotation improves simulation fidelity vs. raw AIGC meshes
+7. **Scalable** — text prompt → SimReady USD in minutes, not hours of manual work. Enables synthetic data generation at dataset scale.
