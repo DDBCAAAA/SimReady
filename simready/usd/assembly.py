@@ -443,6 +443,7 @@ def create_stage(
     output_path: Path,
     settings: PipelineSettings,
     topology: ArticulationTopology | None = None,
+    asset_metadata: dict | None = None,
 ) -> None:
     """Create an OpenUSD stage from processed bodies and materials.
 
@@ -461,6 +462,9 @@ def create_stage(
         output_path: Where to write the .usd/.usda/.usdc file.
         settings: Pipeline settings.
         topology: Optional VLM-inferred kinematic topology.
+        asset_metadata: Optional flat dict of extra provenance/spec fields
+            (e.g. TraceParts specs) embedded under the ``source:`` namespace
+            in the /Root prim customData.
     """
     try:
         from pxr import Usd, UsdGeom, UsdShade, Sdf, Gf, Vt, UsdPhysics
@@ -742,6 +746,10 @@ def create_stage(
     root_prim.SetCustomDataByKey("_Generation_Time", datetime.datetime.now(datetime.timezone.utc).isoformat())
     root_prim.SetCustomDataByKey("_License", "AGPLv3 for Open Source. Commercial Use Requires Explicit Authorization.")
     root_prim.SetCustomDataByKey("_Source", "https://github.com/DDBCAAAA/SimReady")
+
+    if asset_metadata:
+        for k, v in asset_metadata.items():
+            root_prim.SetCustomDataByKey(f"source:{k}", str(v))
 
     stage.GetRootLayer().Save()
     logger.info("Wrote USD stage: %s", output_path)

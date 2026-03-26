@@ -79,6 +79,58 @@ def _add_batch_parser(subparsers: argparse._SubParsersAction) -> None:
                    help="Default material class for all assets (e.g. steel, aluminum, nylon)")
 
 
+def _add_partnet_parser(subparsers: argparse._SubParsersAction) -> None:
+    p = subparsers.add_parser(
+        "partnet",
+        help="Download and convert PartNet-Mobility objects to articulated USD",
+    )
+    p.add_argument(
+        "object_ids", nargs="+",
+        help="PartNet-Mobility object IDs (e.g. 101516 102379)",
+    )
+    p.add_argument(
+        "--data-dir", "-d", type=Path,
+        default=PROJECT_ROOT / "data" / "partnet",
+        help="Download directory (default: data/partnet)",
+    )
+    p.add_argument(
+        "--output", "-o", type=Path,
+        default=PROJECT_ROOT / "output" / "partnet",
+        help="USD output directory (default: output/partnet)",
+    )
+    p.add_argument("--category", default=None,
+                   help="Object category hint for material inference (e.g. StorageFurniture)")
+    p.add_argument("--material", "-m", default=None,
+                   help="Force material class for all links (e.g. wood, steel)")
+    p.add_argument("--vlm", action="store_true",
+                   help="Enable VLM material inference via Claude API")
+    p.add_argument("--hf-token", default=None,
+                   help="HuggingFace API token (only needed for gated repos)")
+    p.add_argument("--config", "-c", type=Path, default=None)
+
+
+def _add_traceparts_parser(subparsers: argparse._SubParsersAction) -> None:
+    p = subparsers.add_parser(
+        "traceparts",
+        help="Batch-convert TraceParts CAD folders (.stp + .txt) to USD",
+    )
+    p.add_argument(
+        "--dir", "-d", type=Path,
+        default=PROJECT_ROOT / "data" / "TraceParts",
+        help="Root TraceParts directory (default: data/TraceParts)",
+    )
+    p.add_argument(
+        "--output", "-o", type=Path,
+        default=PROJECT_ROOT / "output" / "traceparts",
+        help="USD output directory (default: output/traceparts)",
+    )
+    p.add_argument("--config", "-c", type=Path, default=None, help="Pipeline config YAML")
+    p.add_argument(
+        "--material", "-m", default=None,
+        help="Force material class for all parts (e.g. steel, nylon)",
+    )
+
+
 def _add_sldprt_parser(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser("sldprt2step", help="Convert a SolidWorks SLDPRT file to STEP")
     p.add_argument("input", type=Path, help="Input .sldprt file")
@@ -260,6 +312,84 @@ def _run_batch(args: argparse.Namespace) -> None:
     print_batch_summary(results)
 
 
+def _run_partnet(args: argparse.Namespace) -> None:
+    from simready.acquisition.partnet_adapter import convert_partnet_batch
+
+    results = convert_partnet_batch(
+        object_ids      = args.object_ids,
+        data_dir        = args.data_dir,
+        output_dir      = args.output,
+        category_hint   = getattr(args, "category", None),
+        forced_material = getattr(args, "material", None),
+        enable_vlm      = getattr(args, "vlm", False),
+        hf_token        = getattr(args, "hf_token", None),
+    )
+    passed = sum(1 for r in results if r.get("success"))
+    print(f"\nPartNet batch: {passed}/{len(results)} converted\n")
+    for r in results:
+        if r.get("success"):
+            print(f"  [OK]  {r['object_id']:>8}  quality={r.get('quality_score', 0):.2f}"
+                  f"  mat={r.get('material_class', '-')}")
+            print(f"          → {r['usd_path']}")
+        else:
+            print(f"  [ERR] {r['object_id']:>8}  {r.get('error', '')}")
+    print()
+
+
+def _run_traceparts(args: argparse.Namespace) -> None:
+    from simready.acquisition.traceparts_reader import scan_traceparts_dir
+    from simready.pipeline import run as pipeline_run
+
+    entries = scan_traceparts_dir(args.dir)
+    if not entries:
+        print(f"No TraceParts parts found in {args.dir}")
+        return
+
+    args.output.mkdir(parents=True, exist_ok=True)
+    overrides = {"*": args.material} if getattr(args, "material", None) else None
+
+    passed, failed = 0, 0
+    for entry in entries:
+        part_name = entry["part_name"]
+        stp_path  = entry["stp_path"]
+        usd_path  = args.output / part_name / f"{part_name}.usd"
+
+        # Build asset_metadata from TraceParts spec fields
+        meta: dict = {}
+        if entry["description"]:
+            meta["description"] = entry["description"]
+        if entry["supplier"]:
+            meta["supplier"] = entry["supplier"]
+        if entry["reference"]:
+            meta["reference"] = entry["reference"]
+        for k, v in entry["specs"].items():
+            if k not in ("DESIGN", "SUPPLIER", "REFERENCE") and v:
+                meta[k] = v
+
+        print(f"\n[traceparts] {part_name}")
+        if entry["description"]:
+            print(f"  {entry['description']}")
+        try:
+            summary = pipeline_run(
+                stp_path, usd_path,
+                config_path=getattr(args, "config", None),
+                material_overrides=overrides,
+                asset_metadata=meta or None,
+                disable_confidence_gate=True,
+            )
+            print(
+                f"  → {usd_path}  "
+                f"quality={summary['quality_score']:.2f}  "
+                f"mat={summary['material_class']}"
+            )
+            passed += 1
+        except Exception as exc:
+            print(f"  ERROR: {exc}")
+            failed += 1
+
+    print(f"\nTraceParts batch complete: {passed} converted, {failed} failed.\n")
+
+
 def _run_sldprt(args: argparse.Namespace) -> None:
     from simready.ingestion.sldprt_converter import convert_sldprt
 
@@ -336,6 +466,8 @@ def main(argv: list[str] | None = None) -> None:
     _add_batch_parser(subparsers)
     _add_tag_parser(subparsers)
     _add_sldprt_parser(subparsers)
+    _add_traceparts_parser(subparsers)
+    _add_partnet_parser(subparsers)
 
     args = parser.parse_args(argv)
 
@@ -359,6 +491,10 @@ def main(argv: list[str] | None = None) -> None:
             _run_tag(args)
         elif args.command == "sldprt2step":
             _run_sldprt(args)
+        elif args.command == "traceparts":
+            _run_traceparts(args)
+        elif args.command == "partnet":
+            _run_partnet(args)
     except Exception as e:
         logging.getLogger("simready").error("%s", e)
         sys.exit(1)

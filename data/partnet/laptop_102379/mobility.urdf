@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+<robot name="laptop_102379">
+
+  <!-- ══════════════════════════════════════════════
+       Base assembly: chassis + keyboard tray welded
+       ══════════════════════════════════════════════ -->
+  <link name="base">
+    <inertial>
+      <mass value="1.2"/>
+      <inertia ixx="0.012" iyy="0.008" izz="0.015" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <geometry><mesh filename="textured_objs/base_body.obj"/></geometry>
+    </visual>
+    <collision>
+      <geometry><mesh filename="textured_objs/base_body.obj"/></geometry>
+    </collision>
+  </link>
+
+  <!-- Keyboard tray is a child of base, fixed (welded) -->
+  <link name="keyboard_tray">
+    <inertial>
+      <mass value="0.15"/>
+      <inertia ixx="0.001" iyy="0.0008" izz="0.0012" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <geometry><mesh filename="textured_objs/keyboard_tray.obj"/></geometry>
+    </visual>
+    <collision>
+      <geometry><mesh filename="textured_objs/keyboard_tray.obj"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="keyboard_fixed" type="fixed">
+    <parent link="base"/>
+    <child  link="keyboard_tray"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ══════════════════════════════════════════════
+       Screen lid — revolute hinge along X axis
+       Closes at 0 rad (flat), opens to ~115° (2.007 rad)
+       ══════════════════════════════════════════════ -->
+  <link name="screen">
+    <inertial>
+      <mass value="0.55"/>
+      <inertia ixx="0.006" iyy="0.003" izz="0.007" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <geometry><mesh filename="textured_objs/screen_panel.obj"/></geometry>
+    </visual>
+    <collision>
+      <geometry><mesh filename="textured_objs/screen_panel.obj"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="screen_hinge" type="revolute">
+    <parent link="base"/>
+    <child  link="screen"/>
+    <!-- Hinge sits at rear edge of base, Y=0.023 (top of base slab) -->
+    <origin xyz="0.0 0.023 0.230" rpy="0 0 0"/>
+    <axis   xyz="1 0 0"/>
+    <!-- 0 = fully closed (screen flat against base), 2.007 rad ≈ 115° open -->
+    <limit  lower="0.0" upper="2.007" effort="5" velocity="1.5"/>
+  </joint>
+
+</robot>

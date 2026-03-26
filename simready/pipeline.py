@@ -24,6 +24,8 @@ def run(
     output_path: Path,
     config_path: Path | None = None,
     material_overrides: dict[str, str] | None = None,
+    asset_metadata: dict | None = None,
+    disable_confidence_gate: bool = False,
 ) -> dict:
     """Execute the full conversion pipeline.
 
@@ -33,6 +35,11 @@ def run(
         config_path: Optional path to a YAML config file.
         material_overrides: Optional dict mapping body name (or "*" for all)
             to a forced material class string, bypassing auto-classification.
+        asset_metadata: Optional flat dict of extra provenance/spec fields to
+            embed in the USD /Root prim customData (e.g. TraceParts specs).
+        disable_confidence_gate: When True, skip the material confidence gate
+            (useful for curated datasets like TraceParts where material is
+            supplied externally and source files must not be quarantined).
 
     Returns:
         Summary dict with keys: face_count, quality_score, watertight,
@@ -148,6 +155,8 @@ def run(
                     b.metadata["semantic_label"] = mdl_mat.vlm_semantic_label
 
     # --- 3b. Quality gate: material confidence ---
+    if disable_confidence_gate:
+        settings.validation.enable_confidence_gate = False
     # Use the minimum confidence across all materials in the assembly — the
     # weakest link determines whether the whole asset meets the production bar.
     # Raises LowConfidenceError (caught by batch._convert_one as "skipped") when
@@ -220,7 +229,8 @@ def run(
     # --- 5. USD assembly ---
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    create_stage(assembly.bodies, mdl_materials, output_path, settings, topology=topology)
+    create_stage(assembly.bodies, mdl_materials, output_path, settings, topology=topology,
+                 asset_metadata=asset_metadata)
 
     logger.info("Pipeline complete: %s → %s", input_path, output_path)
 

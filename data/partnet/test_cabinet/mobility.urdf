@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<robot name="cabinet_101516">
+
+  <!-- ── Base (static frame) ── -->
+  <link name="base">
+    <inertial>
+      <mass value="15.0"/>
+      <inertia ixx="0.5" iyy="0.4" izz="0.3" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="textured_objs/base.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="textured_objs/base.obj"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ── Door (revolute — swings open on Y axis) ── -->
+  <link name="door">
+    <inertial>
+      <mass value="2.5"/>
+      <inertia ixx="0.05" iyy="0.04" izz="0.03" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="textured_objs/door.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="textured_objs/door.obj"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ── Hinge joint: door swings 0→110° around Y axis ── -->
+  <joint name="door_hinge" type="revolute">
+    <parent link="base"/>
+    <child  link="door"/>
+    <origin xyz="0.0 0.025 0.0" rpy="0 0 0"/>
+    <axis   xyz="0 1 0"/>
+    <limit  lower="0.0" upper="1.9199" effort="10" velocity="2"/>
+  </joint>
+
+</robot>
