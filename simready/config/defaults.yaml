@@ -37,3 +37,19 @@ validation:
   # Confidence quality gate: block USD generation for assets below 0.8 confidence.
   # Set false to disable (useful for single-asset dev/test conversions).
   enable_confidence_gate: true
+
+generation:
+  # Anthropic model used for all LLM calls (planner, coder, critic)
+  model: "claude-opus-4-6"
+  # Maximum critic-revision cycles (outer loop)
+  max_outer_iterations: 5
+  # Maximum traceback-fix retries per execution attempt (inner loop)
+  max_inner_retries: 3
+  # Render views sent to the VLM critic
+  render_views: ["isometric", "front"]
+  # PNG resolution for rendered views [width, height]
+  render_resolution: [512, 512]
+  # CadQuery subprocess timeout in seconds
+  executor_timeout_seconds: 120
+  # Minimum critic confidence to accept a PASS verdict (below → treated as FAIL)
+  critic_min_confidence: 0.75

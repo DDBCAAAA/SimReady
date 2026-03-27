@@ -140,6 +140,40 @@ def _add_sldprt_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--client-secret", default=None, help="Autodesk APS Client Secret (or set AUTODESK_CLIENT_SECRET)")
 
 
+def _add_generate_parser(subparsers: argparse._SubParsersAction) -> None:
+    p = subparsers.add_parser(
+        "generate",
+        help="Generate a SimReady USD asset from a text description via CadQuery",
+    )
+    p.add_argument("prompt", help="Text description of the 3D object to generate")
+    p.add_argument(
+        "--output", "-o", type=Path, default=None,
+        help="Output USD file path (default: output/generated/<prompt_slug>.usd)",
+    )
+    p.add_argument(
+        "--material", "-m", default=None,
+        help="Force material class for all geometry (e.g. steel, cast_iron, nylon)",
+    )
+    p.add_argument("--model", default="claude-opus-4-6", help="Anthropic model ID")
+    p.add_argument(
+        "--max-iterations", type=int, default=5,
+        help="Maximum critic-revision cycles (default: 5)",
+    )
+    p.add_argument(
+        "--max-retries", type=int, default=3,
+        help="Maximum traceback-fix retries per execution attempt (default: 3)",
+    )
+    p.add_argument(
+        "--views", nargs="*", default=None,
+        help="Render views to send the critic (default: isometric front)",
+    )
+    p.add_argument(
+        "--min-confidence", type=float, default=0.75,
+        help="Minimum critic confidence to accept PASS (default: 0.75)",
+    )
+    p.add_argument("--config", "-c", type=Path, default=None, help="Pipeline config YAML")
+
+
 def _add_tag_parser(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser("tag", help="Manually curate an asset in the catalog")
     p.add_argument("asset_id", type=int, help="Catalog asset ID (from simready catalog)")
@@ -403,6 +437,51 @@ def _run_sldprt(args: argparse.Namespace) -> None:
     print(f"Converted: {src} → {step_path}  ({step_path.stat().st_size // 1024} KB)")
 
 
+def _run_generate(args: argparse.Namespace) -> None:
+    from simready.generation.orchestrator import generate
+
+    output = args.output
+    if output is None:
+        slug = args.prompt[:50].replace(" ", "_").replace("/", "_").replace("\\", "_")
+        output = _DEFAULT_OUTPUT_DIR.parent / "generated" / f"{slug}.usd"
+
+    print(f"\n[generate] Prompt: {args.prompt}")
+    print(f"           Output: {output}")
+    if args.material:
+        print(f"           Material: {args.material}")
+
+    result = generate(
+        prompt=args.prompt,
+        output_path=output,
+        config_path=getattr(args, "config", None),
+        material_override=getattr(args, "material", None),
+        model=args.model,
+        max_outer=args.max_iterations,
+        max_inner=args.max_retries,
+        render_views_list=getattr(args, "views", None),
+        min_confidence=args.min_confidence,
+    )
+
+    if result.success:
+        summary = result.pipeline_summary or {}
+        print(f"\n[OK] {result.usd_path}")
+        print(f"     iterations={result.iterations}  inner_retries={result.inner_retries}")
+        print(f"     quality={summary.get('quality_score', 0.0):.2f}"
+              f"  physics={summary.get('physics_complete', False)}"
+              f"  mat={summary.get('material_class', '-')}")
+    else:
+        print(f"\n[FAIL] Generation did not complete successfully.")
+        print(f"       Error: {result.error}")
+        print(f"       Iterations: {result.iterations}  inner_retries={result.inner_retries}")
+        if result.critic_history:
+            last = result.critic_history[-1]
+            print(f"       Last critic verdict: {last.verdict}  confidence={last.confidence:.2f}")
+            for issue in last.issues:
+                print(f"         - {issue}")
+        import sys
+        sys.exit(1)
+
+
 def _run_tag(args: argparse.Namespace) -> None:
     from simready.catalog.db import open_db, get_asset, update_asset_fields
 
@@ -468,6 +547,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_sldprt_parser(subparsers)
     _add_traceparts_parser(subparsers)
     _add_partnet_parser(subparsers)
+    _add_generate_parser(subparsers)
 
     args = parser.parse_args(argv)
 
@@ -495,6 +575,8 @@ def main(argv: list[str] | None = None) -> None:
             _run_traceparts(args)
         elif args.command == "partnet":
             _run_partnet(args)
+        elif args.command == "generate":
+            _run_generate(args)
     except Exception as e:
         logging.getLogger("simready").error("%s", e)
         sys.exit(1)
